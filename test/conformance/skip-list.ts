@@ -63,7 +63,7 @@ export const SKIP_PATHS: string[][] = [
   // ["math_ext"],  -- enabling: math extension functions
   ["network_ext"],
   ["bindings_ext"],
-  ["encoders_ext"],
+  // ["encoders_ext"],  -- enabling: encoder extension functions
   ["block_ext"],
   ["optionals"],
 ];

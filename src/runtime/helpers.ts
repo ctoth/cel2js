@@ -2167,6 +2167,60 @@ function celMathBitShiftRight(a: unknown, b: unknown): CelValue | undefined {
   return undefined;
 }
 
+// ── Encoder Extensions ─────────────────────────────────────────────────────
+
+// Base64 lookup table
+const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** base64.encode(bytes) -> string */
+function celBase64Encode(a: unknown): string | undefined {
+  if (!isBytes(a)) return undefined;
+  let result = "";
+  const len = a.length;
+  for (let i = 0; i < len; i += 3) {
+    const b0 = a[i] as number;
+    const b1 = i + 1 < len ? (a[i + 1] as number) : 0;
+    const b2 = i + 2 < len ? (a[i + 2] as number) : 0;
+    result += B64_CHARS[(b0 >> 2) as number];
+    result += B64_CHARS[(((b0 & 3) << 4) | (b1 >> 4)) as number];
+    result += i + 1 < len ? B64_CHARS[(((b1 & 15) << 2) | (b2 >> 6)) as number] : "=";
+    result += i + 2 < len ? B64_CHARS[(b2 & 63) as number] : "=";
+  }
+  return result;
+}
+
+// Build reverse lookup for base64 decoding
+const B64_DECODE: Record<string, number> = {};
+for (let i = 0; i < B64_CHARS.length; i++) {
+  B64_DECODE[B64_CHARS[i] as string] = i;
+}
+
+/** base64.decode(string) -> bytes */
+function celBase64Decode(a: unknown): Uint8Array | undefined {
+  if (!isStr(a)) return undefined;
+  // Strip padding
+  let s = a;
+  while (s.endsWith("=")) s = s.slice(0, -1);
+  // Pad to valid length if needed (support unpadded input)
+  const bytes: number[] = [];
+  const len = s.length;
+  for (let i = 0; i < len; i += 4) {
+    const c0 = B64_DECODE[s[i] as string];
+    const c1 = i + 1 < len ? B64_DECODE[s[i + 1] as string] : 0;
+    const c2 = i + 2 < len ? B64_DECODE[s[i + 2] as string] : 0;
+    const c3 = i + 3 < len ? B64_DECODE[s[i + 3] as string] : 0;
+    if (c0 === undefined || c1 === undefined) return undefined;
+    bytes.push(((c0 << 2) | ((c1 ?? 0) >> 4)) & 0xff);
+    if (i + 2 < len && c2 !== undefined) {
+      bytes.push((((c1 ?? 0) << 4) | ((c2 ?? 0) >> 2)) & 0xff);
+    }
+    if (i + 3 < len && c3 !== undefined) {
+      bytes.push((((c2 ?? 0) << 6) | (c3 ?? 0)) & 0xff);
+    }
+  }
+  return new Uint8Array(bytes);
+}
+
 // ── createRuntime ──────────────────────────────────────────────────────────
 
 /** Create the _rt object that generated code references */
@@ -2276,5 +2330,8 @@ export function createRuntime() {
     "math.bitNot": celMathBitNot,
     "math.bitShiftLeft": celMathBitShiftLeft,
     "math.bitShiftRight": celMathBitShiftRight,
+    // Encoder extensions
+    "base64.encode": celBase64Encode,
+    "base64.decode": celBase64Decode,
   };
 }

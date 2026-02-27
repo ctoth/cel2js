@@ -322,7 +322,7 @@ const GLOBAL_FUNC_TO_RT: Record<string, string> = {
 };
 
 /** Known extension namespaces — calls like math.fn() route to _rt["math.fn"]() */
-const NAMESPACE_PREFIXES = new Set(["math"]);
+const NAMESPACE_PREFIXES = new Set(["math", "base64"]);
 
 /** Known member functions -> _rt method names (receiver becomes first arg) */
 const MEMBER_FUNC_TO_RT: Record<string, string> = {
