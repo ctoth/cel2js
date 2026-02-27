@@ -54,6 +54,20 @@ function isMap(v: unknown): v is Map<CelValue, CelValue> {
   return v instanceof Map;
 }
 
+/** Check if a value is a struct (plain object with __type marker) */
+function isStruct(v: unknown): v is Record<string, CelValue> & { __type: string } {
+  return (
+    v !== null &&
+    typeof v === "object" &&
+    !Array.isArray(v) &&
+    !(v instanceof Map) &&
+    !(v instanceof Uint8Array) &&
+    !(v instanceof Date) &&
+    "__type" in v &&
+    typeof (v as Record<string, unknown>).__type === "string"
+  );
+}
+
 /** Check if a value is numeric (int, uint, or double) */
 function isNumeric(v: unknown): boolean {
   return isInt(v) || isCelUint(v) || isDouble(v);
@@ -217,8 +231,24 @@ export function celEq(a: unknown, b: unknown): boolean | undefined {
   // CelType
   if (isCelType(a) && isCelType(b)) return a.name === b.name;
 
-  // Type mismatch for non-numeric types
-  return undefined;
+  // Struct (proto message) comparison — plain objects with __type marker
+  if (isStruct(a) && isStruct(b)) {
+    if (a.__type !== b.__type) return false;
+    // Compare all fields (excluding __type marker)
+    const aKeys = Object.keys(a).filter((k) => k !== "__type");
+    const bKeys = Object.keys(b).filter((k) => k !== "__type");
+    const allKeys = new Set([...aKeys, ...bKeys]);
+    for (const key of allKeys) {
+      const av = key in a ? a[key] : null;
+      const bv = key in b ? b[key] : null;
+      const eq = celEq(av, bv);
+      if (eq !== true) return eq;
+    }
+    return true;
+  }
+
+  // CEL _==_ is defined for all types: incompatible types return false, not error
+  return false;
 }
 
 export function celNe(a: unknown, b: unknown): boolean | undefined {
@@ -624,17 +654,47 @@ export function celMakeMap(entries: [CelValue, CelValue][]): Map<CelValue, CelVa
   return m;
 }
 
+/** Default values for protobuf wrapper types when constructed with no value field */
+const WRAPPER_DEFAULTS: Record<string, CelValue> = {
+  "google.protobuf.BoolValue": false,
+  "google.protobuf.BytesValue": new Uint8Array(0),
+  "google.protobuf.DoubleValue": 0.0,
+  "google.protobuf.FloatValue": 0.0,
+  "google.protobuf.Int32Value": 0n,
+  "google.protobuf.Int64Value": 0n,
+  "google.protobuf.StringValue": "",
+  "google.protobuf.UInt32Value": new CelUint(0n),
+  "google.protobuf.UInt64Value": new CelUint(0n),
+};
+
 /** Create a CEL struct (message) from a name and field entries.
  *  For now, we represent structs as plain objects with a __type marker. */
-export function celMakeStruct(
-  _name: string,
-  entries: [string, CelValue][],
-): Record<string, CelValue> {
+export function celMakeStruct(_name: string, entries: [string, CelValue][]): CelValue {
+  // google.protobuf.Value{} with no fields set represents JSON null
+  if (_name === "google.protobuf.Value" && entries.length === 0) {
+    return null;
+  }
+  // Protobuf wrapper types unwrap to their primitive value
+  if (_name in WRAPPER_DEFAULTS) {
+    for (const [field, value] of entries) {
+      if (field === "value") return value;
+    }
+    return WRAPPER_DEFAULTS[_name] as CelValue;
+  }
   const obj: Record<string, CelValue> = {};
+  obj.__type = _name;
   for (const [field, value] of entries) {
     obj[field] = value;
   }
-  return obj;
+  // Wrap in Proxy: absent fields return null (proto absent-field semantics)
+  return new Proxy(obj, {
+    get(target, prop, receiver) {
+      if (typeof prop === "string" && prop !== "__type") {
+        if (!(prop in target)) return null;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as unknown as CelValue;
 }
 
 /** Check if a field exists on an object (the `has()` macro) */

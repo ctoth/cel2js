@@ -15,7 +15,12 @@ export const SKIP_PATHS: string[][] = [
 
   // Core language
   // ["basic"],  -- enabled: literals, variables, functions
-  ["comparisons"],
+  // ["comparisons"],  -- enabled: comparison operations
+  // Skip: proto Any unpacking requires proto deserialization
+  ["comparisons", "eq_wrapper", "eq_proto2_any_unpack_equal"],
+  ["comparisons", "eq_wrapper", "eq_proto3_any_unpack_equal"],
+  ["comparisons", "ne_literal", "ne_proto2_any_unpack"],
+  ["comparisons", "ne_literal", "ne_proto3_any_unpack"],
   ["conversions"],
   // ["integer_math"],  -- enabled: arithmetic operations
   // ["fp_math"],  -- enabled: floating-point math
