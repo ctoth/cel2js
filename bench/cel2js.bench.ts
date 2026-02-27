@@ -24,13 +24,13 @@ describe("cel2js", () => {
       // Cold benchmark: compile + eval every time
       bench(`cold ${tc.name}: ${tc.cel}`, () => {
         const result = compile(tc.cel);
-        result.evaluate(tc.context);
+        result.evaluate(tc.contextBigInt);
       });
 
       // Hot benchmark: pre-compiled eval
       const fn = compiled.evaluate;
       bench(`hot ${tc.name}: ${tc.cel}`, () => {
-        fn(tc.context);
+        fn(tc.contextBigInt);
       });
     }
   }
