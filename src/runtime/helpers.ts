@@ -387,9 +387,19 @@ export function celSize(v: unknown): bigint | undefined {
 
 export function celIndex(obj: unknown, key: unknown): CelValue | undefined {
   if (isList(obj)) {
-    // List index must be int
-    if (!isInt(key)) return undefined;
-    const idx = Number(key);
+    // List index: accept int, uint, or double (if double is a whole number)
+    let idx: number;
+    if (isInt(key)) {
+      idx = Number(key);
+    } else if (isCelUint(key)) {
+      idx = Number(key.value);
+    } else if (isDouble(key)) {
+      // Only allow whole-number doubles as list indices
+      if (!Number.isFinite(key) || key !== Math.trunc(key)) return undefined;
+      idx = key;
+    } else {
+      return undefined;
+    }
     if (idx < 0 || idx >= obj.length) return undefined;
     return obj[idx];
   }
@@ -419,11 +429,18 @@ export function celEndsWith(s: unknown, suffix: unknown): boolean | undefined {
 export function celMatches(s: unknown, pattern: unknown): boolean | undefined {
   if (isStr(s) && isStr(pattern)) {
     try {
-      // Wrap pattern to match entire string (CEL matches() semantics)
-      const re = new RegExp(`^(?:${pattern})$`);
+      // CEL matches() uses RE2 partial-match semantics:
+      // returns true if the regex matches any substring of s.
+      const re = new RegExp(pattern, "v");
       return re.test(s);
     } catch {
-      return undefined;
+      // If 'v' flag not supported or pattern is invalid, retry without
+      try {
+        const re = new RegExp(pattern);
+        return re.test(s);
+      } catch {
+        return undefined;
+      }
     }
   }
   return undefined;
