@@ -607,15 +607,20 @@ function transformCall(
 
   // -- Ternary ----------------------------------------------------------
   if (fn === "_?_:_" && args.length === 3) {
+    const tmpC = temps.next();
+    const idC = identifier(tmpC);
     const cond = transformExpr(at(args, 0), temps, bindings);
     const consequent = transformExpr(at(args, 1), temps, bindings);
     const alternate = transformExpr(at(args, 2), temps, bindings);
-    // cond === true ? consequent : cond === false ? alternate : undefined
-    return conditional(
-      binaryExpr("===", cond, literal(true)),
-      consequent,
-      conditional(binaryExpr("===", cond, literal(false)), alternate, UNDEF),
-    );
+    // (_c = cond, _c === true ? consequent : _c === false ? alternate : undefined)
+    return sequenceExpr([
+      assignExpr(idC, cond),
+      conditional(
+        binaryExpr("===", idC, literal(true)),
+        consequent,
+        conditional(binaryExpr("===", idC, literal(false)), alternate, UNDEF),
+      ),
+    ]);
   }
 
   // -- Operator functions (arithmetic, comparison, index, in) -----------

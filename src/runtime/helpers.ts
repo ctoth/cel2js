@@ -232,16 +232,22 @@ export function celEq(a: unknown, b: unknown): boolean | undefined {
   if (a === null && b === null) return true;
   if (a === null || b === null) return false;
 
-  // bool
-  if (isBool(a) && isBool(b)) return a === b;
+  // Fast path: same reference / same primitive value (handles string, bool, bigint)
+  if (a === b) return true;
+
+  // string (most common equality operand in real-world expressions)
+  // If a === b was false and both are strings, they differ.
+  if (typeof a === "string") return false;
+  if (typeof b === "string") return false;
+
+  // bool — if a === b was false and both are booleans, they differ.
+  // If only one is boolean, incompatible types -> false.
+  if (typeof a === "boolean" || typeof b === "boolean") return false;
 
   // Cross-numeric equality
   if (isNumeric(a) && isNumeric(b)) {
     return numericCompare(a as bigint | CelUint | number, b as bigint | CelUint | number) === 0;
   }
-
-  // string
-  if (isStr(a) && isStr(b)) return a === b;
 
   // bytes
   if (isBytes(a) && isBytes(b)) {
@@ -514,9 +520,22 @@ export function celIn(elem: unknown, collection: unknown): boolean | undefined {
   return undefined;
 }
 
+/** Check if a string contains only code units below 128 (ASCII).
+ *  For ASCII strings, str.length equals the codepoint count. */
+function isAscii(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    if ((s.charCodeAt(i) as number) >= 128) return false;
+  }
+  return true;
+}
+
 export function celSize(v: unknown): bigint | undefined {
   if (isStr(v)) {
-    // Unicode codepoint count using the iterator
+    // ASCII fast path: if all code units < 128, .length === codepoint count
+    if (isAscii(v)) {
+      return BigInt(v.length);
+    }
+    // Non-ASCII: count codepoints via iterator
     let count = 0n;
     for (const _ of v) {
       count++;
@@ -562,46 +581,46 @@ export function celIndex(obj: unknown, key: unknown): CelValue | undefined {
 
 export function celSelect(obj: unknown, field: string): CelValue | undefined {
   if (obj === null || obj === undefined) return undefined;
-  // When selecting from a CelOptional, use optional-like semantics:
-  // missing fields produce CelOptional.none(), type errors produce undefined (error).
-  if (isCelOptional(obj)) {
-    if (!obj.hasValue()) return CelOptional.none() as CelValue;
-    const inner = obj.value();
-    if (inner === null || inner === undefined) return undefined; // error: selecting from null/undefined
-    if (isMap(inner)) {
-      if (mapHas(inner as Map<CelValue, CelValue>, field)) {
-        return CelOptional.of(mapGet(inner as Map<CelValue, CelValue>, field)) as CelValue;
-      }
-      return CelOptional.none() as CelValue; // key missing → none
+  // Fast path: typeof check first to handle the most common case (plain object) quickly
+  if (typeof obj === "object") {
+    // Map: CEL map.field is equivalent to map["field"]
+    if (obj instanceof Map) {
+      return mapGet(obj, field) as CelValue | undefined;
     }
-    if (typeof inner === "object") {
-      if (isStruct(inner)) {
-        // For structs, check if field was explicitly set
-        const keys = Object.keys(inner as Record<string, unknown>).filter((k) => k !== "__type");
-        if (keys.includes(field)) {
-          return CelOptional.of((inner as Record<string, CelValue>)[field]) as CelValue;
+    // CelOptional: missing fields produce CelOptional.none(), type errors produce undefined (error).
+    if (isCelOptional(obj)) {
+      if (!obj.hasValue()) return CelOptional.none() as CelValue;
+      const inner = obj.value();
+      if (inner === null || inner === undefined) return undefined;
+      if (isMap(inner)) {
+        if (mapHas(inner as Map<CelValue, CelValue>, field)) {
+          return CelOptional.of(mapGet(inner as Map<CelValue, CelValue>, field)) as CelValue;
         }
         return CelOptional.none() as CelValue;
       }
-      return CelOptional.of((inner as Record<string, CelValue>)[field]) as CelValue;
+      if (typeof inner === "object") {
+        if (isStruct(inner)) {
+          const keys = Object.keys(inner as Record<string, unknown>).filter((k) => k !== "__type");
+          if (keys.includes(field)) {
+            return CelOptional.of((inner as Record<string, CelValue>)[field]) as CelValue;
+          }
+          return CelOptional.none() as CelValue;
+        }
+        return CelOptional.of((inner as Record<string, CelValue>)[field]) as CelValue;
+      }
+      return undefined;
     }
-    return undefined; // error: selecting from non-object/non-map
-  }
-  if (isMap(obj)) {
-    // CEL: map.field is equivalent to map["field"]
-    return mapGet(obj, field) as CelValue | undefined;
-  }
-  // Primitive CEL types that are JS objects but don't support field access
-  if (isCelUint(obj) || isCelType(obj) || isList(obj) || isBytes(obj)) return undefined;
-  if (isCelTimestamp(obj) || isCelDuration(obj)) return undefined;
-  if (typeof obj === "object") {
-    // Check proto extension fields (backtick-quoted qualified names)
+    // CEL types that are JS objects but don't support field access
+    if (Array.isArray(obj) || obj instanceof Uint8Array) return undefined;
+    if (isCelUint(obj) || isCelType(obj)) return undefined;
+    if (isCelTimestamp(obj) || isCelDuration(obj)) return undefined;
+    // Plain object — the common path
     if (isStruct(obj) && field.includes(".")) {
       const extensions = (obj as Record<symbol, unknown>)[PROTO_EXTENSIONS] as
         | Map<string, CelValue>
         | undefined;
       if (extensions?.has(field)) return extensions.get(field) as CelValue;
-      return undefined; // extension not set
+      return undefined;
     }
     return (obj as Record<string, CelValue>)[field];
   }

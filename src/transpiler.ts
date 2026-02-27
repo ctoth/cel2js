@@ -137,42 +137,136 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
   let cachedBindings: Record<string, unknown> = defaultQualifiedBindings;
   let cachedBindingsArg: Record<string, unknown> | undefined;
 
-  const evaluate = (bindings?: Record<string, unknown>): unknown => {
-    let qualifiedBindings: Record<string, unknown>;
+  /** Resolve qualified bindings (cached). */
+  const resolveQB = (bindings: Record<string, unknown> | undefined): Record<string, unknown> => {
     if (!bindings || Object.keys(bindings).length === 0) {
-      qualifiedBindings = defaultQualifiedBindings;
-    } else if (bindings === cachedBindingsArg) {
-      qualifiedBindings = cachedBindings;
-    } else {
-      qualifiedBindings = { ...defaultQualifiedBindings, ...bindings };
-      cachedBindingsArg = bindings;
-      cachedBindings = qualifiedBindings;
+      return defaultQualifiedBindings;
     }
-    const args: unknown[] = [runtime, qualifiedBindings];
-    for (const name of bindingNames) {
-      // Container resolution: if container is "x" and name is "y",
-      // try "x.y" first in bindings (CEL namespace semantics).
-      if (container && bindings) {
-        const containerKey = `${container}.${name}`;
-        if (containerKey in bindings) {
-          args.push(bindings[containerKey]);
-          continue;
-        }
-      }
-      // Prefer user-provided binding; fall back to default qualified binding
-      if (bindings && name in bindings) {
-        args.push(bindings[name]);
-      } else {
-        args.push(qualifiedBindings[name]);
+    if (bindings === cachedBindingsArg) {
+      return cachedBindings;
+    }
+    const qb = { ...defaultQualifiedBindings, ...bindings };
+    cachedBindingsArg = bindings;
+    cachedBindings = qb;
+    return qb;
+  };
+
+  /** Resolve a single binding by name. */
+  const resolveBinding = (
+    name: string,
+    bindings: Record<string, unknown> | undefined,
+    qb: Record<string, unknown>,
+  ): unknown => {
+    if (container && bindings) {
+      const containerKey = `${container}.${name}`;
+      if (containerKey in bindings) {
+        return bindings[containerKey];
       }
     }
-    const result = compiledFn(...args);
-    // undefined is our error sentinel — convert to a thrown CelError at the boundary
+    if (bindings && name in bindings) {
+      return bindings[name];
+    }
+    return qb[name];
+  };
+
+  /** Check result and throw on error sentinel. */
+  const checkResult = (result: unknown): unknown => {
     if (result === undefined) {
-      throw new CelError(`CEL evaluation error for expression`);
+      throw new CelError("CEL evaluation error for expression");
     }
     return result;
   };
+
+  // Generate specialized evaluate function to avoid args array + spread overhead.
+  // Direct calls with known argument count are ~33x faster than fn(...args).
+  const numBindings = bindingNames.length;
+  let evaluate: (bindings?: Record<string, unknown>) => unknown;
+
+  if (numBindings === 0) {
+    evaluate = (bindings?) => {
+      const qb = resolveQB(bindings);
+      return checkResult(compiledFn(runtime, qb));
+    };
+  } else if (numBindings === 1) {
+    const n0 = bindingNames[0] as string;
+    evaluate = (bindings?) => {
+      const qb = resolveQB(bindings);
+      return checkResult(compiledFn(runtime, qb, resolveBinding(n0, bindings, qb)));
+    };
+  } else if (numBindings === 2) {
+    const n0 = bindingNames[0] as string;
+    const n1 = bindingNames[1] as string;
+    evaluate = (bindings?) => {
+      const qb = resolveQB(bindings);
+      return checkResult(
+        compiledFn(runtime, qb, resolveBinding(n0, bindings, qb), resolveBinding(n1, bindings, qb)),
+      );
+    };
+  } else if (numBindings === 3) {
+    const n0 = bindingNames[0] as string;
+    const n1 = bindingNames[1] as string;
+    const n2 = bindingNames[2] as string;
+    evaluate = (bindings?) => {
+      const qb = resolveQB(bindings);
+      return checkResult(
+        compiledFn(
+          runtime,
+          qb,
+          resolveBinding(n0, bindings, qb),
+          resolveBinding(n1, bindings, qb),
+          resolveBinding(n2, bindings, qb),
+        ),
+      );
+    };
+  } else if (numBindings === 4) {
+    const n0 = bindingNames[0] as string;
+    const n1 = bindingNames[1] as string;
+    const n2 = bindingNames[2] as string;
+    const n3 = bindingNames[3] as string;
+    evaluate = (bindings?) => {
+      const qb = resolveQB(bindings);
+      return checkResult(
+        compiledFn(
+          runtime,
+          qb,
+          resolveBinding(n0, bindings, qb),
+          resolveBinding(n1, bindings, qb),
+          resolveBinding(n2, bindings, qb),
+          resolveBinding(n3, bindings, qb),
+        ),
+      );
+    };
+  } else if (numBindings === 5) {
+    const n0 = bindingNames[0] as string;
+    const n1 = bindingNames[1] as string;
+    const n2 = bindingNames[2] as string;
+    const n3 = bindingNames[3] as string;
+    const n4 = bindingNames[4] as string;
+    evaluate = (bindings?) => {
+      const qb = resolveQB(bindings);
+      return checkResult(
+        compiledFn(
+          runtime,
+          qb,
+          resolveBinding(n0, bindings, qb),
+          resolveBinding(n1, bindings, qb),
+          resolveBinding(n2, bindings, qb),
+          resolveBinding(n3, bindings, qb),
+          resolveBinding(n4, bindings, qb),
+        ),
+      );
+    };
+  } else {
+    // Fallback for >5 bindings: use spread (rare)
+    evaluate = (bindings?) => {
+      const qb = resolveQB(bindings);
+      const args: unknown[] = [runtime, qb];
+      for (const name of bindingNames) {
+        args.push(resolveBinding(name, bindings, qb));
+      }
+      return checkResult(compiledFn(...args));
+    };
+  }
 
   return { evaluate, source: fnSource };
 }
