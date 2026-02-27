@@ -134,7 +134,7 @@ export function celDiv(a: unknown, b: unknown): CelValue | undefined {
     return new CelUint(a.value / b.value);
   }
   if (isDouble(a) && isDouble(b)) {
-    if (b === 0) return undefined;
+    // IEEE 754: double division by zero yields Infinity/-Infinity/NaN, not an error
     return a / b;
   }
   return undefined;

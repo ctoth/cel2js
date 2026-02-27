@@ -17,8 +17,8 @@ export const SKIP_PATHS: string[][] = [
   // ["basic"],  -- enabled: literals, variables, functions
   ["comparisons"],
   ["conversions"],
-  ["integer_math"],
-  ["fp_math"],
+  // ["integer_math"],  -- enabled: arithmetic operations
+  // ["fp_math"],  -- enabled: floating-point math
   ["logic"],
   ["string"],
   ["lists"],
