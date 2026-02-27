@@ -568,7 +568,18 @@ export function celSelect(obj: unknown, field: string): CelValue | undefined {
     // CEL: map.field is equivalent to map["field"]
     return mapGet(obj, field) as CelValue | undefined;
   }
+  // Primitive CEL types that are JS objects but don't support field access
+  if (isCelUint(obj) || isCelType(obj) || isList(obj) || isBytes(obj)) return undefined;
+  if (isCelTimestamp(obj) || isCelDuration(obj)) return undefined;
   if (typeof obj === "object") {
+    // Check proto extension fields (backtick-quoted qualified names)
+    if (isStruct(obj) && field.includes(".")) {
+      const extensions = (obj as Record<symbol, unknown>)[PROTO_EXTENSIONS] as
+        | Map<string, CelValue>
+        | undefined;
+      if (extensions?.has(field)) return extensions.get(field) as CelValue;
+      return undefined; // extension not set
+    }
     return (obj as Record<string, CelValue>)[field];
   }
   return undefined;
@@ -1636,10 +1647,17 @@ export function celMakeList(elements: CelValue[]): CelValue[] | undefined {
   return elements;
 }
 
-/** Create a CEL map from an array of [key, value] pairs */
-export function celMakeMap(entries: [CelValue, CelValue][]): Map<CelValue, CelValue> {
+/** Create a CEL map from an array of [key, value] pairs.
+ *  Returns undefined (error) for invalid key types (float, null) or duplicate keys. */
+export function celMakeMap(entries: [CelValue, CelValue][]): Map<CelValue, CelValue> | undefined {
   const m = new Map<CelValue, CelValue>();
   for (const [k, v] of entries) {
+    // CEL disallows float/double and null as map keys
+    if (isDouble(k) || k === null) return undefined;
+    // Check for duplicate keys (using deep equality for cross-type check)
+    for (const existing of m.keys()) {
+      if (celEq(existing, k) === true) return undefined;
+    }
     m.set(k, v);
   }
   return m;
@@ -2036,6 +2054,12 @@ export function celHas(obj: unknown, field: string): boolean | undefined {
   }
   if (typeof obj === "object") {
     const record = obj as Record<string | symbol, unknown>;
+    // Check proto extension fields (backtick-quoted qualified names)
+    if (isStruct(obj) && field.includes(".")) {
+      const extensions = record[PROTO_EXTENSIONS] as Map<string, CelValue> | undefined;
+      if (extensions?.has(field)) return true;
+      return false; // extension not set
+    }
     const structFields = record[STRUCT_FIELDS] as Set<string> | undefined;
     // If this is a struct with field tracking metadata
     if (structFields !== undefined && "__type" in record) {

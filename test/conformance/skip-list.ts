@@ -32,18 +32,14 @@ export const SKIP_PATHS: string[][] = [
   ["parse", "nest", "message_literal"],
   // Skip: proto message default instance semantics required
   ["parse", "repeat", "select"],
-  // Skip: proto objectValue (Any) not supported in test infra
-  ["parse", "struct_field_names"],
   // ["plumbing"],  -- enabled: minimal programs, eval results, check inputs
   // ["namespace"],  -- enabled: namespace resolution
-  ["type_deductions"],
+  // ["type_deductions"],  -- enabled: type deduction tests
+  // Skip: proto3 unset message fields should return zero-value default (Duration/Timestamp), not null
+  ["type_deductions", "legacy_nullable_types", "null_assignable_to_duration_parameter_candidate"],
+  ["type_deductions", "legacy_nullable_types", "null_assignable_to_timestamp_parameter_candidate"],
   // ["unknowns"],  -- empty suite (0 tests, 0 sub-suites), skipped by runner
   // ["fields"],  -- enabled: field selection, map fields, has(), qualified identifiers
-  // Skip: float/null map keys and duplicate key detection require runtime makeMap changes
-  ["fields", "qualified_identifier_resolution", "map_key_float"],
-  ["fields", "qualified_identifier_resolution", "map_key_null"],
-  ["fields", "qualified_identifier_resolution", "map_value_repeat_key"],
-  ["fields", "qualified_identifier_resolution", "map_value_repeat_key_heterogeneous"],
   // ["timestamps"],  -- enabled: timestamp and duration operations
 
   // Macros
@@ -51,22 +47,14 @@ export const SKIP_PATHS: string[][] = [
   // ["macros2"],  -- enabled: macro operations (v2)
 
   // Proto integration
-  // ["proto2"],  -- enabled: proto2 basics (162/183 passing)
+  // ["proto2"],  -- enabled: proto2 basics
   // ["proto3"],  -- enabled: proto3 basics (all passing)
   // Skip: google.protobuf.Struct field values are doubles in proto but BigInts in CEL integer literals
   ["proto2", "literal_wellknown", "struct"],
   ["proto3", "literal_wellknown", "struct"],
   // Skip: proto2 explicit default values require schema-level default info (e.g. single_int32 defaults to -32)
   ["proto2", "empty_field", "scalar_with_default"],
-  // Skip: proto2 extensions require full extension registry infrastructure
-  ["proto2", "extensions_has"],
-  ["proto2", "extensions_get"],
   // ["dynamic"],  -- enabled: dynamic dispatch / dyn()
-  // Skip: CelUint.value property leaks through wrapper type unwrapping
-  ["dynamic", "uint32", "literal_no_field_access"],
-  ["dynamic", "uint64", "literal_no_field_access"],
-  // Skip: Array.prototype.values leaks through ListValue unwrapping
-  ["dynamic", "list", "literal_no_field_access"],
   // Skip: google.protobuf.Any literal requires proto binary deserialization at runtime
   ["dynamic", "any", "literal"],
   // Skip: Any field access after unwrapping should error
@@ -83,13 +71,13 @@ export const SKIP_PATHS: string[][] = [
   // ["proto2_ext"],  -- enabled: proto2 extension fields
 
   // Extensions
-  // ["string_ext"],  -- enabling: string extension functions
-  // ["math_ext"],  -- enabling: math extension functions
+  // ["string_ext"],  -- enabled: string extension functions
+  // ["math_ext"],  -- enabled: math extension functions
+  // Skip: network_ext suite does not exist in cel-spec conformance data yet
   ["network_ext"],
-  // ["bindings_ext"],  -- enabling: bindings extension
-  // ["encoders_ext"],  -- enabling: encoder extension functions
+  // Skip: cel.block() and cel.index() not yet implemented in transpiler
   ["block_ext"],
-  // ["optionals"],  -- enabling: optional values extension
-  // Skip: proto map<string,string> field type semantics differ from CEL map zero-value
-  ["optionals", "optionals", "struct_optional_ofNonZeroValue_map_optindex_field"],
+  // ["bindings_ext"],  -- enabled: bindings extension
+  // ["encoders_ext"],  -- enabled: encoder extension functions
+  // ["optionals"],  -- enabled: optional values extension
 ];
