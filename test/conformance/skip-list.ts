@@ -60,7 +60,7 @@ export const SKIP_PATHS: string[][] = [
 
   // Extensions
   // ["string_ext"],  -- enabling: string extension functions
-  ["math_ext"],
+  // ["math_ext"],  -- enabling: math extension functions
   ["network_ext"],
   ["bindings_ext"],
   ["encoders_ext"],

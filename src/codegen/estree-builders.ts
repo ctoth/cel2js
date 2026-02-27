@@ -214,9 +214,13 @@ export function program(body: Statement[]): Program {
 // Convenience helpers
 // ---------------------------------------------------------------------------
 
-/** Shorthand for `_rt.methodName(...args)` — the most common codegen pattern. */
+/** Shorthand for `_rt.methodName(...args)` — the most common codegen pattern.
+ *  For dotted names like "math.greatest", uses computed access: `_rt["math.greatest"](...args)`. */
 export function rtCall(method: string, args: (Expression | SpreadElement)[]): CallExpression {
-  return callExpr(memberExpr(identifier("_rt"), identifier(method)), args);
+  const prop = method.includes(".")
+    ? memberExpr(identifier("_rt"), literal(method), true)
+    : memberExpr(identifier("_rt"), identifier(method));
+  return callExpr(prop, args);
 }
 
 /** Shorthand for `object.property` (non-computed, non-optional). */

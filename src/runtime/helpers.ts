@@ -1968,6 +1968,205 @@ function tsInTz(v: CelTimestamp, tz: unknown): Date | undefined {
   return getDateInTimezone(v.toDate(), normalizeTimezone(tz));
 }
 
+// ── Math Extension Functions ───────────────────────────────────────────────
+
+/**
+ * math.greatest(...args) or math.greatest([list])
+ * Returns the greatest numeric value. Cross-numeric comparison.
+ * With a single arg, returns it. With a list arg, finds max in the list.
+ */
+function celMathGreatest(...args: unknown[]): CelValue | undefined {
+  // If single list arg, operate on the list contents
+  let values: unknown[];
+  if (args.length === 1 && isList(args[0])) {
+    values = args[0] as unknown[];
+    if (values.length === 0) return undefined;
+  } else {
+    values = args;
+  }
+
+  // Validate all are numeric
+  for (const v of values) {
+    if (!isNumeric(v)) return undefined;
+  }
+
+  let best = values[0] as bigint | CelUint | number;
+  for (let i = 1; i < values.length; i++) {
+    const v = values[i] as bigint | CelUint | number;
+    if (numericCompare(v, best) > 0) {
+      best = v;
+    }
+  }
+  return best as CelValue;
+}
+
+/**
+ * math.least(...args) or math.least([list])
+ * Returns the least numeric value. Cross-numeric comparison.
+ */
+function celMathLeast(...args: unknown[]): CelValue | undefined {
+  let values: unknown[];
+  if (args.length === 1 && isList(args[0])) {
+    values = args[0] as unknown[];
+    if (values.length === 0) return undefined;
+  } else {
+    values = args;
+  }
+
+  for (const v of values) {
+    if (!isNumeric(v)) return undefined;
+  }
+
+  let best = values[0] as bigint | CelUint | number;
+  for (let i = 1; i < values.length; i++) {
+    const v = values[i] as bigint | CelUint | number;
+    if (numericCompare(v, best) < 0) {
+      best = v;
+    }
+  }
+  return best as CelValue;
+}
+
+/** math.ceil(double) -> double */
+function celMathCeil(v: unknown): number | undefined {
+  if (!isDouble(v)) return undefined;
+  return Math.ceil(v);
+}
+
+/** math.floor(double) -> double */
+function celMathFloor(v: unknown): number | undefined {
+  if (!isDouble(v)) return undefined;
+  return Math.floor(v);
+}
+
+/** math.round(double) -> double — round half away from zero */
+function celMathRound(v: unknown): number | undefined {
+  if (!isDouble(v)) return undefined;
+  if (!Number.isFinite(v)) return v; // NaN, +/-Infinity pass through
+  // Round half away from zero (Go math.Round semantics)
+  return Math.sign(v) * Math.round(Math.abs(v));
+}
+
+/** math.trunc(double) -> double */
+function celMathTrunc(v: unknown): number | undefined {
+  if (!isDouble(v)) return undefined;
+  return Math.trunc(v);
+}
+
+/** math.abs(num) -> same type */
+function celMathAbs(v: unknown): CelValue | undefined {
+  if (isCelUint(v)) return v; // uint is always non-negative
+  if (isInt(v)) {
+    // Check for INT64_MIN overflow: abs(-2^63) overflows
+    if (v === INT64_MIN) return undefined;
+    return v < 0n ? -v : v;
+  }
+  if (isDouble(v)) return Math.abs(v);
+  return undefined;
+}
+
+/** math.sign(num) -> same type */
+function celMathSign(v: unknown): CelValue | undefined {
+  if (isCelUint(v)) {
+    return v.value === 0n ? new CelUint(0n) : new CelUint(1n);
+  }
+  if (isInt(v)) {
+    if (v < 0n) return -1n;
+    if (v > 0n) return 1n;
+    return 0n;
+  }
+  if (isDouble(v)) return Math.sign(v);
+  return undefined;
+}
+
+/** math.isNaN(double) -> bool */
+function celMathIsNaN(v: unknown): boolean | undefined {
+  if (!isDouble(v)) return undefined;
+  return Number.isNaN(v);
+}
+
+/** math.isInf(double) -> bool */
+function celMathIsInf(v: unknown): boolean | undefined {
+  if (!isDouble(v)) return undefined;
+  return !Number.isFinite(v) && !Number.isNaN(v);
+}
+
+/** math.isFinite(double) -> bool */
+function celMathIsFinite(v: unknown): boolean | undefined {
+  if (!isDouble(v)) return undefined;
+  return Number.isFinite(v);
+}
+
+/** math.bitAnd(a, b) -> int or uint (must be same type) */
+function celMathBitAnd(a: unknown, b: unknown): CelValue | undefined {
+  if (isInt(a) && isInt(b)) return BigInt.asIntN(64, a & b);
+  if (isCelUint(a) && isCelUint(b)) return new CelUint(BigInt.asUintN(64, a.value & b.value));
+  return undefined;
+}
+
+/** math.bitOr(a, b) -> int or uint (must be same type) */
+function celMathBitOr(a: unknown, b: unknown): CelValue | undefined {
+  if (isInt(a) && isInt(b)) return BigInt.asIntN(64, a | b);
+  if (isCelUint(a) && isCelUint(b)) return new CelUint(BigInt.asUintN(64, a.value | b.value));
+  return undefined;
+}
+
+/** math.bitXor(a, b) -> int or uint (must be same type) */
+function celMathBitXor(a: unknown, b: unknown): CelValue | undefined {
+  if (isInt(a) && isInt(b)) return BigInt.asIntN(64, a ^ b);
+  if (isCelUint(a) && isCelUint(b)) return new CelUint(BigInt.asUintN(64, a.value ^ b.value));
+  return undefined;
+}
+
+/** math.bitNot(a) -> int or uint */
+function celMathBitNot(a: unknown): CelValue | undefined {
+  if (isInt(a)) return BigInt.asIntN(64, ~a);
+  if (isCelUint(a)) return new CelUint(BigInt.asUintN(64, ~a.value));
+  return undefined;
+}
+
+/**
+ * math.bitShiftLeft(a, b) -> int or uint
+ * a is int or uint, b is int (shift amount).
+ * Negative shift -> error. Shift >= 64 -> 0.
+ */
+function celMathBitShiftLeft(a: unknown, b: unknown): CelValue | undefined {
+  if (!isInt(b)) return undefined;
+  if (b < 0n) return undefined; // negative shift is error
+  if (b >= 64n) {
+    // Shift >= 64 produces 0
+    if (isInt(a)) return 0n;
+    if (isCelUint(a)) return new CelUint(0n);
+    return undefined;
+  }
+  if (isInt(a)) return BigInt.asIntN(64, a << b);
+  if (isCelUint(a)) return new CelUint(BigInt.asUintN(64, a.value << b));
+  return undefined;
+}
+
+/**
+ * math.bitShiftRight(a, b) -> int or uint
+ * For int: logical right shift (convert to unsigned, shift, convert back to signed).
+ * For uint: logical right shift.
+ * Negative shift -> error. Shift >= 64 -> 0.
+ */
+function celMathBitShiftRight(a: unknown, b: unknown): CelValue | undefined {
+  if (!isInt(b)) return undefined;
+  if (b < 0n) return undefined; // negative shift is error
+  if (b >= 64n) {
+    if (isInt(a)) return 0n;
+    if (isCelUint(a)) return new CelUint(0n);
+    return undefined;
+  }
+  if (isInt(a)) {
+    // Logical right shift: convert to unsigned 64-bit, shift, convert back to signed
+    const unsigned = BigInt.asUintN(64, a);
+    return BigInt.asIntN(64, unsigned >> b);
+  }
+  if (isCelUint(a)) return new CelUint(BigInt.asUintN(64, a.value >> b));
+  return undefined;
+}
+
 // ── createRuntime ──────────────────────────────────────────────────────────
 
 /** Create the _rt object that generated code references */
@@ -2059,5 +2258,23 @@ export function createRuntime() {
     isCelUint,
     CelType,
     isCelType,
+    // Math extensions
+    "math.greatest": celMathGreatest,
+    "math.least": celMathLeast,
+    "math.ceil": celMathCeil,
+    "math.floor": celMathFloor,
+    "math.round": celMathRound,
+    "math.trunc": celMathTrunc,
+    "math.abs": celMathAbs,
+    "math.sign": celMathSign,
+    "math.isNaN": celMathIsNaN,
+    "math.isInf": celMathIsInf,
+    "math.isFinite": celMathIsFinite,
+    "math.bitAnd": celMathBitAnd,
+    "math.bitOr": celMathBitOr,
+    "math.bitXor": celMathBitXor,
+    "math.bitNot": celMathBitNot,
+    "math.bitShiftLeft": celMathBitShiftLeft,
+    "math.bitShiftRight": celMathBitShiftRight,
   };
 }

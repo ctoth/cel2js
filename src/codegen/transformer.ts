@@ -321,6 +321,9 @@ const GLOBAL_FUNC_TO_RT: Record<string, string> = {
   dyn: "dyn",
 };
 
+/** Known extension namespaces — calls like math.fn() route to _rt["math.fn"]() */
+const NAMESPACE_PREFIXES = new Set(["math"]);
+
 /** Known member functions -> _rt method names (receiver becomes first arg) */
 const MEMBER_FUNC_TO_RT: Record<string, string> = {
   contains: "contains",
@@ -503,6 +506,12 @@ function transformCall(
   if (rtMethod !== undefined) {
     const transformedArgs = args.map((a) => transformExpr(a, temps, bindings));
     return rtCall(rtMethod, transformedArgs);
+  }
+
+  // -- Namespace function call: math.fn(args) -> _rt["math.fn"](args) ---
+  if (target !== undefined && target.kind === "Ident" && NAMESPACE_PREFIXES.has(target.name)) {
+    const transformedArgs = args.map((a) => transformExpr(a, temps, bindings));
+    return rtCall(`${target.name}.${fn}`, transformedArgs);
   }
 
   // -- Member method call: obj.method(args) -> _rt.method(obj, ...args) -
