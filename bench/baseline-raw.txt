@@ -1,0 +1,124 @@
+[33mBenchmarking is an experimental feature.
+Breaking changes might not follow SemVer, please pin Vitest's version when using it.[39m
+
+[1m[46m RUN [49m[22m [36mv3.2.4 [39m[90mC:/Users/Q/code/cel2js[39m
+
+
+ [32m✓[39m bench/competitors.bench.ts[2m > [22m@marcbachmann/cel-js[33m 13409[2mms[22m[39m
+     [1mname                                                                                          [22m  [1m           hz[22m  [1m   min[22m  [1m   max[22m  [1m  mean[22m  [1m   p75[22m  [1m   p99[22m  [1m  p995[22m  [1m  p999[22m  [1m   rme[22m  [1msamples[22m
+   [32m·[39m cold trivial: true                                                                              [34m 2,109,643.58[39m  [36m0.0004[39m  [36m0.4458[39m  [36m0.0005[39m  [36m0.0005[39m  [36m0.0006[39m  [36m0.0007[39m  [36m0.0011[39m  [2m±0.44%[22m  [2m1054822[22m
+   [32m·[39m hot trivial: true                                                                               [34m14,665,100.00[39m  [36m0.0000[39m  [36m0.0865[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0002[39m  [36m0.0002[39m  [2m±0.10%[22m  [2m7332550[22m
+   [32m·[39m cold arithmetic: x + y * 2                                                                      [34m   741,043.70[39m  [36m0.0011[39m  [36m0.4975[39m  [36m0.0013[39m  [36m0.0012[39m  [36m0.0027[39m  [36m0.0029[39m  [36m0.0042[39m  [2m±0.85%[22m  [2m 370522[22m
+   [32m·[39m hot arithmetic: x + y * 2                                                                       [34m 4,104,708.00[39m  [36m0.0002[39m  [36m0.4574[39m  [36m0.0002[39m  [36m0.0002[39m  [36m0.0005[39m  [36m0.0005[39m  [36m0.0007[39m  [2m±1.07%[22m  [2m2052354[22m
+   [32m·[39m cold string_ops: name.startsWith("J") && name.size() > 3                                        [34m   399,805.52[39m  [36m0.0020[39m  [36m0.5664[39m  [36m0.0025[39m  [36m0.0023[39m  [36m0.0050[39m  [36m0.0053[39m  [36m0.0080[39m  [2m±1.04%[22m  [2m 199903[22m
+   [32m·[39m hot string_ops: name.startsWith("J") && name.size() > 3                                         [34m 2,735,900.36[39m  [36m0.0003[39m  [36m0.4599[39m  [36m0.0004[39m  [36m0.0004[39m  [36m0.0007[39m  [36m0.0008[39m  [36m0.0010[39m  [2m±0.69%[22m  [2m1367951[22m
+   [32m·[39m cold ternary: x > 0 ? x * 2 : -x                                                                [34m   502,614.39[39m  [36m0.0015[39m  [36m2.2194[39m  [36m0.0020[39m  [36m0.0017[39m  [36m0.0040[39m  [36m0.0044[39m  [36m0.0069[39m  [2m±1.42%[22m  [2m 251308[22m
+   [32m·[39m hot ternary: x > 0 ? x * 2 : -x                                                                 [34m 3,968,753.21[39m  [36m0.0002[39m  [36m0.2879[39m  [36m0.0003[39m  [36m0.0003[39m  [36m0.0005[39m  [36m0.0006[39m  [36m0.0007[39m  [2m±0.17%[22m  [2m1984377[22m
+   [32m·[39m cold comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)                                            [34m   315,801.37[39m  [36m0.0026[39m  [36m0.7844[39m  [36m0.0032[39m  [36m0.0028[39m  [36m0.0060[39m  [36m0.0065[39m  [36m0.0094[39m  [2m±1.36%[22m  [2m 157901[22m
+   [32m·[39m hot comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)                                             [34m 2,055,785.59[39m  [36m0.0004[39m  [36m0.7538[39m  [36m0.0005[39m  [36m0.0005[39m  [36m0.0011[39m  [36m0.0011[39m  [36m0.0014[39m  [2m±0.89%[22m  [2m1027893[22m
+   [32m·[39m cold real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"  [34m   328,536.36[39m  [36m0.0026[39m  [36m0.6644[39m  [36m0.0030[39m  [36m0.0028[39m  [36m0.0061[39m  [36m0.0067[39m  [36m0.0091[39m  [2m±1.10%[22m  [2m 164269[22m
+   [32m·[39m hot real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"   [34m 1,974,651.61[39m  [36m0.0004[39m  [36m0.6254[39m  [36m0.0005[39m  [36m0.0005[39m  [36m0.0010[39m  [36m0.0011[39m  [36m0.0013[39m  [2m±1.30%[22m  [2m 987326[22m
+
+ [32m✓[39m bench/competitors.bench.ts[2m > [22m@bufbuild/cel[33m 11048[2mms[22m[39m
+     [1mname                                                                                          [22m  [1m           hz[22m  [1m   min[22m  [1m   max[22m  [1m  mean[22m  [1m   p75[22m  [1m   p99[22m  [1m  p995[22m  [1m  p999[22m  [1m   rme[22m  [1msamples[22m
+   [32m·[39m cold trivial: true                                                                              [34m    32,583.36[39m  [36m0.0162[39m  [36m3.1140[39m  [36m0.0307[39m  [36m0.0269[39m  [36m0.0767[39m  [36m0.9307[39m  [36m1.3397[39m  [2m±4.67%[22m  [2m  16292[22m
+   [32m·[39m hot trivial: true                                                                               [34m14,599,913.08[39m  [36m0.0000[39m  [36m0.0685[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0002[39m  [36m0.0002[39m  [36m0.0002[39m  [2m±0.11%[22m  [2m7299958[22m
+   [32m·[39m cold arithmetic: x + y * 2                                                                      [34m    22,436.82[39m  [36m0.0278[39m  [36m1.8832[39m  [36m0.0446[39m  [36m0.0403[39m  [36m0.1338[39m  [36m0.6717[39m  [36m0.8685[39m  [2m±2.86%[22m  [2m  11219[22m
+   [32m·[39m hot arithmetic: x + y * 2                                                                       [34m 2,524,248.00[39m  [36m0.0003[39m  [36m9.0663[39m  [36m0.0004[39m  [36m0.0004[39m  [36m0.0008[39m  [36m0.0009[39m  [36m0.0015[39m  [2m±3.60%[22m  [2m1262124[22m
+   [32m·[39m cold string_ops: name.startsWith("J") && name.size() > 3                                        [34m    11,196.71[39m  [36m0.0503[39m  [36m4.7332[39m  [36m0.0893[39m  [36m0.1015[39m  [36m0.5230[39m  [36m0.6336[39m  [36m0.9364[39m  [2m±2.89%[22m  [2m   5599[22m
+   [32m·[39m hot string_ops: name.startsWith("J") && name.size() > 3                                         [34m 1,848,965.63[39m  [36m0.0004[39m  [36m0.2160[39m  [36m0.0005[39m  [36m0.0005[39m  [36m0.0011[39m  [36m0.0012[39m  [36m0.0015[39m  [2m±0.44%[22m  [2m 924483[22m
+   [32m·[39m cold ternary: x > 0 ? x * 2 : -x                                                                [34m    14,611.03[39m  [36m0.0450[39m  [36m5.1467[39m  [36m0.0684[39m  [36m0.0644[39m  [36m0.4765[39m  [36m0.5442[39m  [36m0.8288[39m  [2m±2.90%[22m  [2m   7306[22m
+   [32m·[39m hot ternary: x > 0 ? x * 2 : -x                                                                 [34m 2,252,108.00[39m  [36m0.0003[39m  [36m0.3106[39m  [36m0.0004[39m  [36m0.0004[39m  [36m0.0009[39m  [36m0.0010[39m  [36m0.0013[39m  [2m±0.48%[22m  [2m1126054[22m
+   [32m·[39m cold comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)                                            [34m    11,104.86[39m  [36m0.0610[39m  [36m1.0367[39m  [36m0.0901[39m  [36m0.0873[39m  [36m0.4819[39m  [36m0.5700[39m  [36m0.7489[39m  [2m±1.94%[22m  [2m   5556[22m
+   [32m·[39m hot comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)                                             [34m   236,180.25[39m  [36m0.0036[39m  [36m0.3750[39m  [36m0.0042[39m  [36m0.0039[39m  [36m0.0082[39m  [36m0.0087[39m  [36m0.0127[39m  [2m±0.67%[22m  [2m 118091[22m
+   [32m·[39m cold real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"  [34m    11,441.00[39m  [36m0.0663[39m  [36m0.8994[39m  [36m0.0874[39m  [36m0.0775[39m  [36m0.4453[39m  [36m0.5193[39m  [36m0.6705[39m  [2m±1.72%[22m  [2m   5721[22m
+   [32m·[39m hot real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"   [34m   360,678.56[39m  [36m0.0023[39m  [36m0.5848[39m  [36m0.0028[39m  [36m0.0025[39m  [36m0.0055[39m  [36m0.0059[39m  [36m0.0079[39m  [2m±0.83%[22m  [2m 180340[22m
+
+ [32m✓[39m bench/competitors.bench.ts[2m > [22mcel-js[33m 4166[2mms[22m[39m
+     [1mname                            [22m  [1m        hz[22m  [1m   min[22m  [1m   max[22m  [1m  mean[22m  [1m   p75[22m  [1m   p99[22m  [1m  p995[22m  [1m  p999[22m  [1m   rme[22m  [1msamples[22m
+   [32m·[39m cold trivial: true                [34m357,323.71[39m  [36m0.0023[39m  [36m0.4991[39m  [36m0.0028[39m  [36m0.0026[39m  [36m0.0054[39m  [36m0.0057[39m  [36m0.0079[39m  [2m±0.97%[22m  [2m 178662[22m
+   [32m·[39m hot trivial: true                 [34m818,227.51[39m  [36m0.0010[39m  [36m0.0617[39m  [36m0.0012[39m  [36m0.0012[39m  [36m0.0024[39m  [36m0.0025[39m  [36m0.0034[39m  [2m±0.10%[22m  [2m 409114[22m
+   [32m·[39m cold arithmetic: x + y * 2        [34m179,528.60[39m  [36m0.0041[39m  [36m0.6402[39m  [36m0.0056[39m  [36m0.0048[39m  [36m0.0116[39m  [36m0.0125[39m  [36m0.0284[39m  [2m±0.95%[22m  [2m  89765[22m
+   [32m·[39m hot arithmetic: x + y * 2         [34m521,091.69[39m  [36m0.0016[39m  [36m0.4725[39m  [36m0.0019[39m  [36m0.0018[39m  [36m0.0036[39m  [36m0.0037[39m  [36m0.0046[39m  [2m±0.22%[22m  [2m 260546[22m
+   [32m·[39m cold ternary: x > 0 ? x * 2 : -x  [34m117,033.44[39m  [36m0.0068[39m  [36m6.9423[39m  [36m0.0085[39m  [36m0.0077[39m  [36m0.0178[39m  [36m0.0200[39m  [36m0.1485[39m  [2m±2.79%[22m  [2m  58517[22m
+   [32m·[39m hot ternary: x > 0 ? x * 2 : -x   [34m448,909.37[39m  [36m0.0020[39m  [36m0.3091[39m  [36m0.0022[39m  [36m0.0021[39m  [36m0.0043[39m  [36m0.0046[39m  [36m0.0055[39m  [2m±0.38%[22m  [2m 224455[22m
+
+ [32m✓[39m bench/native.bench.ts[2m > [22mnative baseline[33m 16801[2mms[22m[39m
+     [1mname                                                                                     [22m  [1m           hz[22m  [1m   min[22m  [1m   max[22m  [1m  mean[22m  [1m   p75[22m  [1m   p99[22m  [1m  p995[22m  [1m  p999[22m  [1m   rme[22m  [1msamples[22m
+   [32m·[39m trivial: true                                                                              [34m15,692,106.00[39m  [36m0.0000[39m  [36m0.1766[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0002[39m  [2m±0.22%[22m  [2m7846053[22m
+   [32m·[39m arithmetic: x + y * 2                                                                      [34m14,704,409.06[39m  [36m0.0000[39m  [36m0.2926[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0002[39m  [36m0.0002[39m  [2m±0.25%[22m  [2m7352206[22m
+   [32m·[39m string_ops: name.startsWith("J") && name.size() > 3                                        [34m14,449,219.11[39m  [36m0.0000[39m  [36m0.1996[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0002[39m  [36m0.0002[39m  [36m0.0002[39m  [2m±0.24%[22m  [2m7224611[22m
+   [32m·[39m ternary: x > 0 ? x * 2 : -x                                                                [34m14,755,024.00[39m  [36m0.0000[39m  [36m0.4206[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0002[39m  [36m0.0002[39m  [36m0.0002[39m  [2m±0.42%[22m  [2m7377512[22m
+   [32m·[39m comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)                                            [34m11,198,598.00[39m  [36m0.0000[39m  [36m0.7093[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0002[39m  [36m0.0002[39m  [36m0.0003[39m  [2m±1.38%[22m  [2m5599299[22m
+   [32m·[39m real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"  [34m11,424,203.72[39m  [36m0.0000[39m  [36m0.3307[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0002[39m  [36m0.0002[39m  [36m0.0002[39m  [2m±0.29%[22m  [2m5712103[22m
+
+ [32m✓[39m bench/cel2js.bench.ts[2m > [22mcel2js[33m 16247[2mms[22m[39m
+     [1mname                                                                                          [22m  [1m           hz[22m  [1m   min[22m  [1m   max[22m  [1m  mean[22m  [1m   p75[22m  [1m   p99[22m  [1m  p995[22m  [1m  p999[22m  [1m   rme[22m  [1msamples[22m
+   [32m·[39m cold trivial: true                                                                              [34m    90,662.46[39m  [36m0.0082[39m  [36m3.5404[39m  [36m0.0110[39m  [36m0.0104[39m  [36m0.0227[39m  [36m0.0293[39m  [36m0.1443[39m  [2m±2.56%[22m  [2m  45332[22m
+   [32m·[39m hot trivial: true                                                                               [34m16,324,084.00[39m  [36m0.0000[39m  [36m0.0933[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0001[39m  [2m±0.09%[22m  [2m8162042[22m
+   [32m·[39m cold arithmetic: x + y * 2                                                                      [34m    48,298.18[39m  [36m0.0152[39m  [36m1.7422[39m  [36m0.0207[39m  [36m0.0180[39m  [36m0.0449[39m  [36m0.0510[39m  [36m0.2520[39m  [2m±1.44%[22m  [2m  24150[22m
+   [32m·[39m hot arithmetic: x + y * 2                                                                       [34m 7,521,600.50[39m  [36m0.0001[39m  [36m0.3734[39m  [36m0.0001[39m  [36m0.0002[39m  [36m0.0003[39m  [36m0.0003[39m  [36m0.0004[39m  [2m±0.25%[22m  [2m3760801[22m
+   [32m·[39m cold string_ops: name.startsWith("J") && name.size() > 3                                        [34m    27,208.35[39m  [36m0.0283[39m  [36m3.1642[39m  [36m0.0368[39m  [36m0.0342[39m  [36m0.0779[39m  [36m0.1038[39m  [36m0.4286[39m  [2m±1.91%[22m  [2m  13605[22m
+   [32m·[39m hot string_ops: name.startsWith("J") && name.size() > 3                                         [34m 8,223,912.36[39m  [36m0.0000[39m  [36m0.2275[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0003[39m  [36m0.0003[39m  [36m0.0004[39m  [2m±0.20%[22m  [2m4111957[22m
+   [32m·[39m cold ternary: x > 0 ? x * 2 : -x                                                                [34m    30,913.89[39m  [36m0.0255[39m  [36m0.6207[39m  [36m0.0323[39m  [36m0.0288[39m  [36m0.0651[39m  [36m0.0733[39m  [36m0.4381[39m  [2m±1.21%[22m  [2m  15458[22m
+   [32m·[39m hot ternary: x > 0 ? x * 2 : -x                                                                 [34m 9,709,022.12[39m  [36m0.0000[39m  [36m0.0725[39m  [36m0.0001[39m  [36m0.0001[39m  [36m0.0002[39m  [36m0.0002[39m  [36m0.0003[39m  [2m±0.10%[22m  [2m4854513[22m
+   [32m·[39m cold comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)                                            [34m    26,675.61[39m  [36m0.0307[39m  [36m0.3410[39m  [36m0.0375[39m  [36m0.0357[39m  [36m0.0800[39m  [36m0.1023[39m  [36m0.2255[39m  [2m±0.71%[22m  [2m  13338[22m
+   [32m·[39m hot comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)                                             [34m 6,756,672.00[39m  [36m0.0001[39m  [36m0.4233[39m  [36m0.0001[39m  [36m0.0002[39m  [36m0.0003[39m  [36m0.0003[39m  [36m0.0005[39m  [2m±0.66%[22m  [2m3378336[22m
+   [32m·[39m cold real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"  [34m    23,518.40[39m  [36m0.0360[39m  [36m0.4146[39m  [36m0.0425[39m  [36m0.0393[39m  [36m0.0822[39m  [36m0.1074[39m  [36m0.2767[39m  [2m±0.74%[22m  [2m  11763[22m
+   [32m·[39m hot real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"   [34m 2,949,724.00[39m  [36m0.0002[39m  [36m0.0627[39m  [36m0.0003[39m  [36m0.0003[39m  [36m0.0006[39m  [36m0.0007[39m  [36m0.0008[39m  [2m±0.07%[22m  [2m1474862[22m
+
+[1m[46m BENCH [49m[22m [36mSummary
+[39m
+  hot trivial: true[2m - bench/cel2js.bench.ts[2m > [22m[2mcel2js[22m
+[32m    1.68x [39m[90mfaster than [39mhot ternary: x > 0 ? x * 2 : -x
+[32m    1.98x [39m[90mfaster than [39mhot string_ops: name.startsWith("J") && name.size() > 3
+[32m    2.17x [39m[90mfaster than [39mhot arithmetic: x + y * 2
+[32m    2.42x [39m[90mfaster than [39mhot comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)
+[32m    5.53x [39m[90mfaster than [39mhot real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"
+[32m    180.05x [39m[90mfaster than [39mcold trivial: true
+[32m    337.99x [39m[90mfaster than [39mcold arithmetic: x + y * 2
+[32m    528.05x [39m[90mfaster than [39mcold ternary: x > 0 ? x * 2 : -x
+[32m    599.97x [39m[90mfaster than [39mcold string_ops: name.startsWith("J") && name.size() > 3
+[32m    611.95x [39m[90mfaster than [39mcold comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)
+[32m    694.10x [39m[90mfaster than [39mcold real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"
+
+  hot trivial: true[2m - bench/competitors.bench.ts[2m > [22m[2m@marcbachmann/cel-js[22m
+[32m    3.57x [39m[90mfaster than [39mhot arithmetic: x + y * 2
+[32m    3.70x [39m[90mfaster than [39mhot ternary: x > 0 ? x * 2 : -x
+[32m    5.36x [39m[90mfaster than [39mhot string_ops: name.startsWith("J") && name.size() > 3
+[32m    6.95x [39m[90mfaster than [39mcold trivial: true
+[32m    7.13x [39m[90mfaster than [39mhot comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)
+[32m    7.43x [39m[90mfaster than [39mhot real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"
+[32m    19.79x [39m[90mfaster than [39mcold arithmetic: x + y * 2
+[32m    29.18x [39m[90mfaster than [39mcold ternary: x > 0 ? x * 2 : -x
+[32m    36.68x [39m[90mfaster than [39mcold string_ops: name.startsWith("J") && name.size() > 3
+[32m    44.64x [39m[90mfaster than [39mcold real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"
+[32m    46.44x [39m[90mfaster than [39mcold comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)
+
+  hot trivial: true[2m - bench/competitors.bench.ts[2m > [22m[2m@bufbuild/cel[22m
+[32m    5.78x [39m[90mfaster than [39mhot arithmetic: x + y * 2
+[32m    6.48x [39m[90mfaster than [39mhot ternary: x > 0 ? x * 2 : -x
+[32m    7.90x [39m[90mfaster than [39mhot string_ops: name.startsWith("J") && name.size() > 3
+[32m    40.48x [39m[90mfaster than [39mhot real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"
+[32m    61.82x [39m[90mfaster than [39mhot comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)
+[32m    448.08x [39m[90mfaster than [39mcold trivial: true
+[32m    650.71x [39m[90mfaster than [39mcold arithmetic: x + y * 2
+[32m    999.24x [39m[90mfaster than [39mcold ternary: x > 0 ? x * 2 : -x
+[32m    1276.10x [39m[90mfaster than [39mcold real_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"
+[32m    1303.95x [39m[90mfaster than [39mcold string_ops: name.startsWith("J") && name.size() > 3
+[32m    1314.73x [39m[90mfaster than [39mcold comprehension: [1, 2, 3, 4, 5].filter(x, x > 2)
+
+  hot trivial: true[2m - bench/competitors.bench.ts[2m > [22m[2mcel-js[22m
+[32m    1.57x [39m[90mfaster than [39mhot arithmetic: x + y * 2
+[32m    1.82x [39m[90mfaster than [39mhot ternary: x > 0 ? x * 2 : -x
+[32m    2.29x [39m[90mfaster than [39mcold trivial: true
+[32m    4.56x [39m[90mfaster than [39mcold arithmetic: x + y * 2
+[32m    6.99x [39m[90mfaster than [39mcold ternary: x > 0 ? x * 2 : -x
+
+  trivial: true[2m - bench/native.bench.ts[2m > [22m[2mnative baseline[22m
+[32m    1.06x [39m[90mfaster than [39mternary: x > 0 ? x * 2 : -x
+[32m    1.07x [39m[90mfaster than [39marithmetic: x + y * 2
+[32m    1.09x [39m[90mfaster than [39mstring_ops: name.startsWith("J") && name.size() > 3
+[32m    1.37x [39m[90mfaster than [39mreal_world: request.auth.claims.email.endsWith("@example.com") && request.method == "GET"
+[32m    1.40x [39m[90mfaster than [39mcomprehension: [1, 2, 3, 4, 5].filter(x, x > 2)
+

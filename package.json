@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "bench": "vitest bench",
     "bench:run": "vitest bench --run",
+    "bench:gate": "tsx bench/gate.ts",
     "precommit": "tsc --noEmit && biome check .",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

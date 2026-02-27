@@ -1,0 +1,8 @@
+{
+  "hot trivial": 15800000,
+  "hot arithmetic": 6600000,
+  "hot string_ops": 8100000,
+  "hot ternary": 9100000,
+  "hot comprehension": 6600000,
+  "hot real_world": 2700000
+}
