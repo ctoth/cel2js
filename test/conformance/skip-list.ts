@@ -14,7 +14,7 @@ export const SKIP_PATHS: string[][] = [
   // ===== ALL TESTS SKIPPED — No transpiler implemented yet =====
 
   // Core language
-  ["basic"],
+  // ["basic"],  -- enabled: literals, variables, functions
   ["comparisons"],
   ["conversions"],
   ["integer_math"],
@@ -23,7 +23,7 @@ export const SKIP_PATHS: string[][] = [
   ["string"],
   ["lists"],
   ["parse"],
-  ["plumbing"],
+  // ["plumbing"],  -- enabled: minimal programs, eval results, check inputs
   ["namespace"],
   ["type_deductions"],
   // ["unknowns"],  -- empty suite (0 tests, 0 sub-suites), skipped by runner

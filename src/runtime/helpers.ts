@@ -613,6 +613,86 @@ export function celFilter(
   return result;
 }
 
+// ── Map / Struct / Comprehension Helpers ──────────────────────────────
+
+/** Create a CEL map from an array of [key, value] pairs */
+export function celMakeMap(entries: [CelValue, CelValue][]): Map<CelValue, CelValue> {
+  const m = new Map<CelValue, CelValue>();
+  for (const [k, v] of entries) {
+    m.set(k, v);
+  }
+  return m;
+}
+
+/** Create a CEL struct (message) from a name and field entries.
+ *  For now, we represent structs as plain objects with a __type marker. */
+export function celMakeStruct(
+  _name: string,
+  entries: [string, CelValue][],
+): Record<string, CelValue> {
+  const obj: Record<string, CelValue> = {};
+  for (const [field, value] of entries) {
+    obj[field] = value;
+  }
+  return obj;
+}
+
+/** Check if a field exists on an object (the `has()` macro) */
+export function celHas(obj: unknown, field: string): boolean {
+  if (obj === null || obj === undefined) return false;
+  if (obj instanceof Map) {
+    return obj.has(field);
+  }
+  if (typeof obj === "object") {
+    return (
+      field in (obj as Record<string, unknown>) &&
+      (obj as Record<string, unknown>)[field] !== undefined
+    );
+  }
+  return false;
+}
+
+/**
+ * Execute a CEL comprehension loop.
+ *
+ * @param range - The collection to iterate over (list or map)
+ * @param init - Initial value of the accumulator
+ * @param iterVar - Name of the iteration variable (informational, not used at runtime)
+ * @param accuVar - Name of the accumulator variable (informational, not used at runtime)
+ * @param condFn - Loop condition function (iterVar, accuVar) => bool
+ * @param stepFn - Step function (iterVar, accuVar) => newAccu
+ * @param resultFn - Result function (accuVar) => result
+ */
+export function celComprehension(
+  range: unknown,
+  init: unknown,
+  _iterVar: string,
+  _accuVar: string,
+  condFn: (iter: CelValue, accu: unknown) => unknown,
+  stepFn: (iter: CelValue, accu: unknown) => unknown,
+  resultFn: (accu: unknown) => unknown,
+): unknown {
+  let accu = init;
+  if (Array.isArray(range)) {
+    for (const elem of range) {
+      const cond = condFn(elem as CelValue, accu);
+      if (cond === false) break;
+      if (cond !== true) return undefined; // error in condition
+      accu = stepFn(elem as CelValue, accu);
+    }
+  } else if (range instanceof Map) {
+    for (const [key] of range) {
+      const cond = condFn(key as CelValue, accu);
+      if (cond === false) break;
+      if (cond !== true) return undefined;
+      accu = stepFn(key as CelValue, accu);
+    }
+  } else {
+    return undefined; // range is not iterable
+  }
+  return resultFn(accu);
+}
+
 // ── Logical Helpers ────────────────────────────────────────────────────────
 
 /**
@@ -716,6 +796,11 @@ export function createRuntime() {
     not: celNot,
     or: celOr,
     and: celAnd,
+    // Map / Struct / Comprehension
+    makeMap: celMakeMap,
+    makeStruct: celMakeStruct,
+    has: celHas,
+    comprehension: celComprehension,
     // Types
     CelUint,
     celUint: (n: bigint) => new CelUint(n),

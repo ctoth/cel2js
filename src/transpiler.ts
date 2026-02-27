@@ -3,6 +3,14 @@ import { transform } from "./codegen/transformer.js";
 import { parse } from "./parser/index.js";
 import { createRuntime } from "./runtime/helpers.js";
 
+/** Error thrown when CEL evaluation fails (e.g. division by zero, type mismatch) */
+export class CelError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CelError";
+  }
+}
+
 export interface CompileResult {
   /** The compiled evaluation function */
   evaluate: (bindings?: Record<string, unknown>) => unknown;
@@ -46,7 +54,22 @@ export function compile(cel: string, _options?: CompileOptions): CompileResult {
     ...args: unknown[]
   ) => unknown;
   const compiledFn = factory();
-  const runtime = createRuntime();
+  const baseRuntime = createRuntime();
+
+  // Wrap runtime with a Proxy: unknown method calls return a function
+  // that returns undefined (our error sentinel) instead of throwing TypeError.
+  const runtime = new Proxy(baseRuntime, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (value !== undefined) return value;
+      // Unknown property: return a function that returns undefined (CEL error)
+      if (typeof prop === "string") {
+        return () => undefined;
+      }
+      return undefined;
+    },
+  });
+
   const bindingNames = result.bindings;
 
   const evaluate = (bindings?: Record<string, unknown>): unknown => {
@@ -54,7 +77,12 @@ export function compile(cel: string, _options?: CompileOptions): CompileResult {
     for (const name of bindingNames) {
       args.push(bindings?.[name]);
     }
-    return compiledFn(...args);
+    const result = compiledFn(...args);
+    // undefined is our error sentinel — convert to a thrown CelError at the boundary
+    if (result === undefined) {
+      throw new CelError(`CEL evaluation error for expression`);
+    }
+    return result;
   };
 
   return { evaluate, source: fnSource };
