@@ -182,6 +182,9 @@ export function celNeg(a: unknown): CelValue | undefined {
  * Deep equality for CEL values. Supports cross-numeric comparison.
  */
 export function celEq(a: unknown, b: unknown): boolean | undefined {
+  // Propagate errors (undefined is our error sentinel)
+  if (a === undefined || b === undefined) return undefined;
+
   // null checks
   if (a === null && b === null) return true;
   if (a === null || b === null) return false;

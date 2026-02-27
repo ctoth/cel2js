@@ -24,7 +24,7 @@ export const SKIP_PATHS: string[][] = [
   ["conversions"],
   // ["integer_math"],  -- enabled: arithmetic operations
   // ["fp_math"],  -- enabled: floating-point math
-  ["logic"],
+  // ["logic"],  -- enabled: logic operations
   ["string"],
   ["lists"],
   ["parse"],
