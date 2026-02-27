@@ -181,51 +181,44 @@ function buildQualifiedResolution(
 ): Expression {
   const _b = identifier("_qb");
 
-  // Build from longest prefix to shortest
-  // Longest: all segments joined -> direct lookup from _b
-  // Shortest: first segment as simple binding, rest as selects
-  const levels: { prefix: string; remaining: string[] }[] = [];
-  for (let i = segments.length; i >= 1; i--) {
-    levels.push({
-      prefix: segments.slice(0, i).join("."),
-      remaining: segments.slice(i),
-    });
-  }
-
-  // Build the fallback (shortest prefix = simple binding)
   const rootName = segments[0] as string;
-  // Don't add the root name to bindings if a qualified name covers it,
-  // because the root may not exist as a standalone binding.
-  // We still need the root as a parameter for the fallback case.
   // Synthetic names (block index, iter var) are local, not external bindings.
   if (!isSyntheticName(rootName)) {
     bindings.add(rootName);
   }
 
+  // Build the fallback: root as simple binding parameter, rest as selects.
+  // The root binding parameter always has the same value as _qb[rootName]
+  // (both populated from the same source in evaluate()), so we skip the
+  // root-level _qb check entirely — the fallback handles it.
   let fallback: Expression = identifier(rootName);
   for (let i = 1; i < segments.length; i++) {
     fallback = rtCall("select", [fallback, literal(segments[i] as string)]);
   }
 
-  // Build conditional chain from shortest prefix up to longest.
-  // We iterate from shortest to longest so the longest ends up as the
-  // outermost test (checked first at runtime), matching CEL's
-  // longest-prefix-wins semantics.
+  // For single-segment references, check _qb then fallback
+  if (segments.length === 1) {
+    return conditional(
+      binaryExpr("in", literal(rootName), _b),
+      memberExpr(_b, literal(rootName), true),
+      fallback,
+    );
+  }
+
+  // For multi-segment chains, check intermediate prefixes from longest to
+  // shortest (CEL longest-prefix-wins semantics), but skip the root-level
+  // check since it's redundant with the direct-access fallback.
   let result: Expression = fallback;
-  // Include all levels including the root name level (levels.length - 1)
-  // so that _qb["rootName"] is checked before falling through to the raw binding parameter.
-  for (let i = levels.length - 1; i >= 0; i--) {
-    const level = levels[i] as { prefix: string; remaining: string[] };
-    const key = level.prefix;
+  for (let i = 1; i < segments.length; i++) {
+    const key = segments.slice(0, i + 1).join(".");
     const lookupExpr: Expression = memberExpr(_b, literal(key), true);
 
-    // Apply remaining selects
+    // Apply remaining selects after the matched prefix
     let selected: Expression = lookupExpr;
-    for (const field of level.remaining) {
-      selected = rtCall("select", [selected, literal(field)]);
+    for (let j = i + 1; j < segments.length; j++) {
+      selected = rtCall("select", [selected, literal(segments[j] as string)]);
     }
 
-    // "key" in _b ? _b["key"] (+ selects) : <next>
     result = conditional(binaryExpr("in", literal(key), _b), selected, result);
   }
 
@@ -250,14 +243,6 @@ function buildQualifiedHas(
   const _b = identifier("_qb");
   const fullPath = [...segments, field];
 
-  const levels: { prefix: string; remaining: string[] }[] = [];
-  for (let i = fullPath.length; i >= 1; i--) {
-    levels.push({
-      prefix: fullPath.slice(0, i).join("."),
-      remaining: fullPath.slice(i),
-    });
-  }
-
   // Fallback: root as simple binding, then selects, then has
   const rootName = segments[0] as string;
   if (!isSyntheticName(rootName)) {
@@ -270,29 +255,24 @@ function buildQualifiedHas(
   }
   const fallback: Expression = rtCall("has", [fallbackBase, literal(field)]);
 
-  // Build from shortest to longest so the longest prefix is the outermost
-  // test (checked first at runtime), matching CEL longest-prefix-wins.
-  // Include all levels including root name level so _qb["rootName"] is checked.
+  // Build from intermediate prefixes (skip root — redundant with fallback)
+  // to longest (full path). Longest ends up outermost (checked first).
   let result: Expression = fallback;
-  for (let i = levels.length - 1; i >= 0; i--) {
-    const level = levels[i] as { prefix: string; remaining: string[] };
-    const key = level.prefix;
+  for (let i = 1; i < fullPath.length; i++) {
+    const key = fullPath.slice(0, i + 1).join(".");
+    const remaining = fullPath.slice(i + 1);
 
-    if (level.remaining.length === 0) {
-      // Entire path is in _b -> has = true (key exists in bindings)
+    if (remaining.length === 0) {
+      // Entire path is in _qb -> has = true
       result = conditional(binaryExpr("in", literal(key), _b), literal(true), result);
     } else {
-      // Partial path in _b, remaining fields need has/select
+      // Partial path in _qb, remaining fields need has/select
       const lookupExpr: Expression = memberExpr(_b, literal(key), true);
-      const remainingFields = level.remaining;
       let base: Expression = lookupExpr;
-      for (let j = 0; j < remainingFields.length - 1; j++) {
-        base = rtCall("select", [base, literal(remainingFields[j] as string)]);
+      for (let j = 0; j < remaining.length - 1; j++) {
+        base = rtCall("select", [base, literal(remaining[j] as string)]);
       }
-      const hasExpr = rtCall("has", [
-        base,
-        literal(remainingFields[remainingFields.length - 1] as string),
-      ]);
+      const hasExpr = rtCall("has", [base, literal(remaining[remaining.length - 1] as string)]);
       result = conditional(binaryExpr("in", literal(key), _b), hasExpr, result);
     }
   }
@@ -893,11 +873,68 @@ function transformLogicalOr(
 // Comprehension
 // ---------------------------------------------------------------------------
 
+/**
+ * Detect if a comprehension is a simple filter pattern:
+ *   list.filter(x, predicate)
+ * Pattern: accuInit=[], loopCondition=true, result=accu,
+ *   step = test ? accu + [iterVar] : accu
+ * Returns the predicate CelExpr if matched, undefined otherwise.
+ */
+function isFilterPattern(node: CelExpr & { kind: "Comprehension" }): CelExpr | undefined {
+  // Must be single-variable comprehension
+  if (node.iterVar2 !== undefined) return undefined;
+
+  // accuInit must be empty list
+  if (node.accuInit.kind !== "CreateList" || node.accuInit.elements.length !== 0) return undefined;
+
+  // loopCondition must be `true`
+  if (node.loopCondition.kind !== "BoolLiteral" || node.loopCondition.value !== true)
+    return undefined;
+
+  // result must be the accumulator
+  if (node.result.kind !== "Ident" || node.result.name !== node.accuVar) return undefined;
+
+  // loopStep must be _?_:_(test, _+_(accu, [iterVar]), accu)
+  const step = node.loopStep;
+  if (step.kind !== "Call" || step.fn !== "_?_:_" || step.args.length !== 3) return undefined;
+
+  const [test, consequent, alternate] = step.args;
+
+  // alternate must be Ident(accuVar)
+  if (alternate?.kind !== "Ident" || alternate.name !== node.accuVar) return undefined;
+
+  // consequent must be _+_(Ident(accuVar), CreateList([Ident(iterVar)]))
+  if (consequent?.kind !== "Call" || consequent.fn !== "_+_" || consequent.args.length !== 2)
+    return undefined;
+
+  const [addLhs, addRhs] = consequent.args;
+  if (addLhs?.kind !== "Ident" || addLhs.name !== node.accuVar) return undefined;
+  if (
+    addRhs?.kind !== "CreateList" ||
+    addRhs.elements.length !== 1 ||
+    addRhs.elements[0]?.kind !== "Ident" ||
+    addRhs.elements[0].name !== node.iterVar
+  )
+    return undefined;
+
+  return test;
+}
+
 function transformComprehension(
   node: CelExpr & { kind: "Comprehension" },
   temps: TempAllocator,
   bindings: Set<string>,
 ): Expression {
+  // Fast path: detect simple filter pattern and emit _rt.filterList()
+  const filterPredicate = isFilterPattern(node);
+  if (filterPredicate !== undefined) {
+    const iterRange = transformExpr(node.iterRange, temps, bindings);
+    const innerBindings = new Set(bindings);
+    innerBindings.add(node.iterVar);
+    const predBody = transformExpr(filterPredicate, temps, innerBindings);
+    return rtCall("filterList", [iterRange, arrowFn([identifier(node.iterVar)], predBody, true)]);
+  }
+
   const iterRange = transformExpr(node.iterRange, temps, bindings);
   const accuInit = transformExpr(node.accuInit, temps, bindings);
 

@@ -2198,6 +2198,34 @@ export function celComprehension(
   return resultFn(accu);
 }
 
+/**
+ * Optimized filter for list comprehensions — O(n) instead of O(n^2).
+ * Replaces the generic comprehension + list concat pattern for simple filters.
+ */
+export function celFilterList(range: unknown, predicate: (elem: unknown) => unknown): unknown {
+  if (Array.isArray(range)) {
+    const result: unknown[] = [];
+    for (const elem of range) {
+      const test = predicate(elem);
+      if (test === true) result.push(elem);
+      else if (test === false) continue;
+      else return undefined; // error in predicate -> whole filter errors
+    }
+    return result;
+  }
+  if (range instanceof Map) {
+    const result: unknown[] = [];
+    for (const key of range.keys()) {
+      const test = predicate(key as CelValue);
+      if (test === true) result.push(key);
+      else if (test === false) continue;
+      else return undefined;
+    }
+    return result;
+  }
+  return undefined;
+}
+
 // ── Logical Helpers ────────────────────────────────────────────────────────
 
 /**
@@ -3504,6 +3532,7 @@ export function createRuntime(options?: RuntimeOptions) {
     makeStruct: makeStructWithContainer,
     has: celHas,
     comprehension: celComprehension,
+    filterList: celFilterList,
     // Type conversions (timestamp/duration)
     duration: celDuration,
     timestamp: celTimestamp,

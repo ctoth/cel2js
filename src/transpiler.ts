@@ -134,8 +134,20 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
     return undefined;
   };
 
+  let cachedBindings: Record<string, unknown> = defaultQualifiedBindings;
+  let cachedBindingsArg: Record<string, unknown> | undefined;
+
   const evaluate = (bindings?: Record<string, unknown>): unknown => {
-    const qualifiedBindings = { ...defaultQualifiedBindings, ...bindings };
+    let qualifiedBindings: Record<string, unknown>;
+    if (!bindings || Object.keys(bindings).length === 0) {
+      qualifiedBindings = defaultQualifiedBindings;
+    } else if (bindings === cachedBindingsArg) {
+      qualifiedBindings = cachedBindings;
+    } else {
+      qualifiedBindings = { ...defaultQualifiedBindings, ...bindings };
+      cachedBindingsArg = bindings;
+      cachedBindings = qualifiedBindings;
+    }
     const args: unknown[] = [runtime, qualifiedBindings];
     for (const name of bindingNames) {
       // Container resolution: if container is "x" and name is "y",
