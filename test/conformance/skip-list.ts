@@ -74,8 +74,7 @@ export const SKIP_PATHS: string[][] = [
   // ["string_ext"],  -- enabled: string extension functions
   // ["math_ext"],  -- enabled: math extension functions
   // ["network_ext"],  -- enabled: network extension (no conformance data in cel-spec yet; tested via supplementary)
-  // Skip: cel.block() and cel.index() not yet implemented in transpiler
-  ["block_ext"],
+  // ["block_ext"],  -- enabled: block extension
   // ["bindings_ext"],  -- enabled: bindings extension
   // ["encoders_ext"],  -- enabled: encoder extension functions
   // ["optionals"],  -- enabled: optional values extension

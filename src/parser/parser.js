@@ -223,14 +223,58 @@
     return node;
   }
 
-  function maybeExpand(target, funcName, args) {
-    // Macro expansion for member-call forms: target.func(iterVar, expr)
+  /**
+   * Extract a variable name from either an Ident node or a cel.iterVar(depth, id) call.
+   * cel.iterVar(depth, id) → synthetic Ident name "@iv_<depth>_<id>"
+   * Returns undefined if the node is not a valid variable reference.
+   */
+  function extractVarName(node) {
+    if (node.kind === "Ident") return node.name;
     if (
-      args.length >= 2 &&
-      args[0] !== undefined &&
-      args[0].kind === "Ident"
+      node.kind === "Call" &&
+      node.fn === "iterVar" &&
+      node.target !== undefined &&
+      node.target.kind === "Ident" &&
+      node.target.name === "cel" &&
+      node.args.length === 2 &&
+      node.args[0].kind === "IntLiteral" &&
+      node.args[1].kind === "IntLiteral"
     ) {
-      const varName = args[0].name;
+      return `_iv_${node.args[0].value}_${node.args[1].value}`;
+    }
+    return undefined;
+  }
+
+  function maybeExpand(target, funcName, args) {
+    // cel.iterVar(depth, id) → synthetic Ident node
+    if (
+      target !== undefined &&
+      target.kind === "Ident" &&
+      target.name === "cel" &&
+      funcName === "iterVar" &&
+      args.length === 2 &&
+      args[0].kind === "IntLiteral" &&
+      args[1].kind === "IntLiteral"
+    ) {
+      return ident(`_iv_${args[0].value}_${args[1].value}`);
+    }
+
+    // cel.index(n) → synthetic Ident node for block bindings
+    if (
+      target !== undefined &&
+      target.kind === "Ident" &&
+      target.name === "cel" &&
+      funcName === "index" &&
+      args.length === 1 &&
+      args[0].kind === "IntLiteral"
+    ) {
+      return ident(`_bi${args[0].value}`);
+    }
+
+    // Macro expansion for member-call forms: target.func(iterVar, expr)
+    const varName0 = args.length >= 2 ? extractVarName(args[0]) : undefined;
+    if (varName0 !== undefined) {
+      const varName = varName0;
       // Two-arg macros: target.func(var, expr)
       if (args.length === 2) {
         switch (funcName) {
@@ -243,12 +287,12 @@
         }
       }
       // Three-arg macros: target.func(var1, var2, expr) or target.map(var, pred, expr)
+      const varName1_3 = args.length === 3 ? extractVarName(args[1]) : undefined;
       if (
         args.length === 3 &&
-        args[1] !== undefined &&
-        args[1].kind === "Ident"
+        varName1_3 !== undefined
       ) {
-        const var2Name = args[1].name;
+        const var2Name = varName1_3;
         switch (funcName) {
           case "exists":     return expandExists2(target, varName, var2Name, args[2]);
           case "all":        return expandAll2(target, varName, var2Name, args[2]);
@@ -262,12 +306,12 @@
         return expandMapFilter(target, varName, args[1], args[2]);
       }
       // Four-arg macros: target.func(var1, var2, pred, expr)
+      const varName1_4 = args.length === 4 ? extractVarName(args[1]) : undefined;
       if (
         args.length === 4 &&
-        args[1] !== undefined &&
-        args[1].kind === "Ident"
+        varName1_4 !== undefined
       ) {
-        const var2Name = args[1].name;
+        const var2Name = varName1_4;
         switch (funcName) {
           case "transformList": return expandTransformListFilter(target, varName, var2Name, args[2], args[3]);
           case "transformMap":  return expandTransformMapFilter(target, varName, var2Name, args[2], args[3]);

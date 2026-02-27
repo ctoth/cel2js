@@ -257,6 +257,45 @@ function convertFieldValue(field: DescField, value: unknown): CelValue {
 }
 
 /**
+ * Build a default-constructed CEL struct for a proto message type.
+ * Creates an empty struct and populates singular message-typed fields
+ * (non-oneof, non-repeated) with their own defaults so that the Proxy's
+ * protoFieldDefault heuristic doesn't return incorrect values for them.
+ * Uses cycle detection to avoid infinite recursion on self-referential types.
+ */
+function buildDefaultStruct(schema: DescMessage, visited?: Set<string>): CelValue {
+  const seen = visited ?? new Set<string>();
+  seen.add(schema.typeName);
+
+  // Create empty struct for this message type
+  const defaultStruct = celMakeStruct(schema.typeName, []) as CelValue;
+  if (defaultStruct === null || defaultStruct === undefined || typeof defaultStruct !== "object") {
+    return defaultStruct;
+  }
+
+  // Only set defaults for singular message-typed fields (not in a oneof, not repeated/map)
+  // that the Proxy's protoFieldDefault might handle incorrectly.
+  // Use non-enumerable properties to avoid affecting celEq struct comparison.
+  for (const field of schema.fields) {
+    if (
+      !field.oneof &&
+      field.fieldKind === "message" &&
+      field.message &&
+      !seen.has(field.message.typeName)
+    ) {
+      Object.defineProperty(defaultStruct, field.name, {
+        value: buildDefaultStruct(field.message, new Set(seen)),
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+    }
+  }
+
+  return defaultStruct;
+}
+
+/**
  * Convert a deserialized proto message to the CEL struct format
  * used by celMakeStruct (plain object with __type and STRUCT_FIELDS).
  */
@@ -267,7 +306,15 @@ function protoMessageToStruct(msg: Record<string, unknown>, schema: DescMessage)
   for (const field of schema.fields) {
     if (!isFieldSet(msg, field)) continue;
 
-    const jsValue = msg[field.localName];
+    // For oneof fields, the value is stored in the oneof discriminated union,
+    // not directly on the message. Access via msg[oneofName].value.
+    let jsValue: unknown;
+    if (field.oneof) {
+      const oneofGroup = msg[field.oneof.localName] as { case: string; value: unknown } | undefined;
+      jsValue = oneofGroup?.case === field.localName ? oneofGroup.value : msg[field.localName];
+    } else {
+      jsValue = msg[field.localName];
+    }
 
     if (field.fieldKind === "list") {
       // Convert repeated fields to CEL lists
@@ -332,6 +379,32 @@ function protoMessageToStruct(msg: Record<string, unknown>, schema: DescMessage)
   }
 
   const result = celMakeStruct(typeName, entries) as CelValue;
+
+  // For unset message-typed oneof fields, set default-constructed messages directly
+  // on the result Proxy. This ensures proto3 field access semantics: accessing an
+  // unset oneof message field returns a default message instance (with zero-valued
+  // fields), not null. We use Object.defineProperty with enumerable:false so these
+  // defaults don't appear in Object.keys() (which celEq uses for struct comparison),
+  // but are still accessible via property access (e.g. obj.oneof_type).
+  if (result !== null && result !== undefined && typeof result === "object") {
+    const setFieldNames = new Set(entries.map(([name]) => name));
+    for (const field of schema.fields) {
+      if (
+        field.oneof &&
+        field.fieldKind === "message" &&
+        field.message &&
+        !setFieldNames.has(field.name)
+      ) {
+        // This oneof message field was not set — provide default-constructed message
+        Object.defineProperty(result, field.name, {
+          value: buildDefaultStruct(field.message),
+          writable: true,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+    }
+  }
 
   // Decode proto2 extension fields from $unknown data and attach to struct
   if (
