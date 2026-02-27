@@ -21,13 +21,19 @@ export const SKIP_PATHS: string[][] = [
   ["comparisons", "eq_wrapper", "eq_proto3_any_unpack_equal"],
   ["comparisons", "ne_literal", "ne_proto2_any_unpack"],
   ["comparisons", "ne_literal", "ne_proto3_any_unpack"],
-  ["conversions"],
+  // ["conversions"],  -- enabled: type conversion functions
   // ["integer_math"],  -- enabled: arithmetic operations
   // ["fp_math"],  -- enabled: floating-point math
   // ["logic"],  -- enabled: logic operations
   // ["string"],  -- enabled: string operations
   // ["lists"],  -- enabled: list operations
-  ["parse"],
+  // ["parse"],  -- enabled: CEL parse tests
+  // Skip: proto objectValue (Any) not supported in test infra
+  ["parse", "nest", "message_literal"],
+  // Skip: proto message default instance semantics required
+  ["parse", "repeat", "select"],
+  // Skip: proto objectValue (Any) not supported in test infra
+  ["parse", "struct_field_names"],
   // ["plumbing"],  -- enabled: minimal programs, eval results, check inputs
   ["namespace"],
   ["type_deductions"],

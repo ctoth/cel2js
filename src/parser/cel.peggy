@@ -349,12 +349,10 @@ Identifier "identifier"
 
 Selector "selector"
   = selector:$([_a-zA-Z][_a-zA-Z0-9]*)
-    {
-      if (["true", "false", "null", "in"].includes(selector)) {
-        error("reserved keyword");
-      }
-      return selector;
+    &{
+      return selector !== "true" && selector !== "false" && selector !== "null" && selector !== "in";
     }
+    { return selector; }
 
 /* ── literals ───────────────────────────────────────────────── */
 

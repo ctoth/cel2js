@@ -14,8 +14,8 @@ import {
   identifier,
   literal,
   logicalExpr,
+  memberExpr,
   newExpr,
-  optionalDot,
   program,
   returnStatement,
   rtCall,
@@ -33,7 +33,19 @@ class TempAllocator {
   private readonly used: string[] = [];
 
   next(): string {
-    const name = `_${String.fromCharCode(97 + this.counter)}`; // _a, _b, _c...
+    const n = this.counter;
+    // _a.._z, then _aa, _ab, ... for overflow
+    let name: string;
+    if (n < 26) {
+      name = `_${String.fromCharCode(97 + n)}`;
+    } else {
+      // Multi-char: _aa, _ab, ..., _az, _ba, ...
+      const hi = Math.floor(n / 26) - 1;
+      const lo = n % 26;
+      name =
+        (hi < 26 ? `_${String.fromCharCode(97 + hi)}` : `_${hi.toString(36)}`) +
+        String.fromCharCode(97 + lo);
+    }
     this.counter++;
     this.used.push(name);
     return name;
@@ -104,6 +116,20 @@ export function transform(celAst: CelExpr): TransformResult {
 // ---------------------------------------------------------------------------
 
 const UNDEF = identifier("undefined");
+
+/** CEL type constant names — these resolve to CelType values, not bindings. */
+const CEL_TYPE_CONSTANTS = new Set([
+  "bool",
+  "int",
+  "uint",
+  "double",
+  "string",
+  "bytes",
+  "list",
+  "map",
+  "type",
+  "null_type",
+]);
 
 /** Safe array index — asserts element exists (length already validated by caller). */
 function at<T>(arr: readonly T[], i: number): T {
@@ -194,6 +220,10 @@ function transformExpr(node: CelExpr, temps: TempAllocator, bindings: Set<string
     // -- Ident ----------------------------------------------------------
 
     case "Ident":
+      // CEL type constants resolve to CelType values, not bindings
+      if (CEL_TYPE_CONSTANTS.has(node.name)) {
+        return newExpr(memberExpr(identifier("_rt"), identifier("CelType")), [literal(node.name)]);
+      }
       bindings.add(node.name);
       return identifier(node.name);
 
@@ -206,7 +236,7 @@ function transformExpr(node: CelExpr, temps: TempAllocator, bindings: Set<string
         return rtCall("has", [operand, literal(node.field)]);
       }
       const operand = transformExpr(node.operand, temps, bindings);
-      return optionalDot(operand, node.field);
+      return rtCall("select", [operand, literal(node.field)]);
     }
 
     // -- Call -----------------------------------------------------------

@@ -250,6 +250,16 @@ export function celEq(a: unknown, b: unknown): boolean | undefined {
     return true;
   }
 
+  // Date (timestamp) equality
+  if (a instanceof Date && b instanceof Date) {
+    return a.getTime() === b.getTime();
+  }
+
+  // CelDuration equality
+  if (isCelDuration(a) && isCelDuration(b)) {
+    return a.seconds === b.seconds && a.nanos === b.nanos;
+  }
+
   // CEL _==_ is defined for all types: incompatible types return false, not error
   return false;
 }
@@ -409,6 +419,20 @@ export function celIndex(obj: unknown, key: unknown): CelValue | undefined {
   return undefined;
 }
 
+// ── Select Helper (field access on maps and objects) ──────────────────────
+
+export function celSelect(obj: unknown, field: string): CelValue | undefined {
+  if (obj === null || obj === undefined) return undefined;
+  if (isMap(obj)) {
+    // CEL: map.field is equivalent to map["field"]
+    return mapGet(obj, field) as CelValue | undefined;
+  }
+  if (typeof obj === "object") {
+    return (obj as Record<string, CelValue>)[field];
+  }
+  return undefined;
+}
+
 // ── String Helpers ─────────────────────────────────────────────────────────
 
 export function celContains(s: unknown, sub: unknown): boolean | undefined {
@@ -455,8 +479,11 @@ export function celToInt(v: unknown): bigint | undefined {
   }
   if (isDouble(v)) {
     if (!Number.isFinite(v)) return undefined;
-    const r = BigInt(Math.trunc(v));
-    return inInt64Range(r) ? r : undefined;
+    // CEL spec: double must be in range (-2^63, 2^63) exclusive
+    // At the boundaries, double precision can't distinguish adjacent values,
+    // so we reject doubles >= 2^63 or <= -2^63 using double comparison
+    if (v >= 2 ** 63 || v <= -(2 ** 63)) return undefined;
+    return BigInt(Math.trunc(v));
   }
   if (isBool(v)) return v ? 1n : 0n;
   if (isStr(v)) {
@@ -551,9 +578,25 @@ export function celToString(v: unknown): string | undefined {
 export function celToBool(v: unknown): boolean | undefined {
   if (isBool(v)) return v;
   if (isStr(v)) {
-    if (v === "true") return true;
-    if (v === "false") return false;
-    return undefined;
+    // CEL follows Go strconv.ParseBool semantics
+    switch (v) {
+      case "1":
+      case "t":
+      case "T":
+      case "true":
+      case "TRUE":
+      case "True":
+        return true;
+      case "0":
+      case "f":
+      case "F":
+      case "false":
+      case "FALSE":
+      case "False":
+        return false;
+      default:
+        return undefined;
+    }
   }
   if (isInt(v)) return v !== 0n;
   return undefined;
@@ -567,23 +610,104 @@ export function celToBytes(v: unknown): Uint8Array | undefined {
   return undefined;
 }
 
-export function celType(v: unknown): string {
-  if (v === null) return "null_type";
-  if (isBool(v)) return "bool";
-  if (isInt(v)) return "int";
-  if (isCelUint(v)) return "uint";
-  if (isDouble(v)) return "double";
-  if (isStr(v)) return "string";
-  if (isBytes(v)) return "bytes";
-  if (isList(v)) return "list";
-  if (isMap(v)) return "map";
-  if (isCelType(v)) return "type";
-  if (v instanceof Date) return "google.protobuf.Timestamp";
-  return "unknown";
+export function celType(v: unknown): CelType {
+  if (v === null) return new CelType("null_type");
+  if (isBool(v)) return new CelType("bool");
+  if (isInt(v)) return new CelType("int");
+  if (isCelUint(v)) return new CelType("uint");
+  if (isDouble(v)) return new CelType("double");
+  if (isStr(v)) return new CelType("string");
+  if (isBytes(v)) return new CelType("bytes");
+  if (isList(v)) return new CelType("list");
+  if (isMap(v)) return new CelType("map");
+  if (isCelType(v)) return new CelType("type");
+  if (v instanceof Date) return new CelType("google.protobuf.Timestamp");
+  if (isCelDuration(v)) return new CelType("google.protobuf.Duration");
+  return new CelType("unknown");
 }
 
 export function celDyn(v: unknown): unknown {
   return v;
+}
+
+// ── Duration Helper ──────────────────────────────────────────────────────
+
+/** A CEL duration value: stores seconds and nanoseconds */
+export class CelDuration {
+  constructor(
+    public readonly seconds: bigint,
+    public readonly nanos: number,
+  ) {}
+}
+
+/** Check if a value is a CelDuration */
+export function isCelDuration(v: unknown): v is CelDuration {
+  return v instanceof CelDuration;
+}
+
+/**
+ * Parse a duration string like "100s", "1.5h", "-2m30s", etc.
+ * Returns CelDuration or undefined on error.
+ */
+function parseDurationString(s: string): CelDuration | undefined {
+  const re = /^(-)?(\d+(?:\.\d+)?)(s|ms|us|ns|m|h)$/;
+  const match = re.exec(s);
+  if (!match) return undefined;
+  const [, sign, numStr, unit] = match;
+  const num = Number(numStr);
+  if (!Number.isFinite(num)) return undefined;
+
+  let totalNanos: number;
+  switch (unit) {
+    case "h":
+      totalNanos = num * 3600e9;
+      break;
+    case "m":
+      totalNanos = num * 60e9;
+      break;
+    case "s":
+      totalNanos = num * 1e9;
+      break;
+    case "ms":
+      totalNanos = num * 1e6;
+      break;
+    case "us":
+      totalNanos = num * 1e3;
+      break;
+    case "ns":
+      totalNanos = num;
+      break;
+    default:
+      return undefined;
+  }
+
+  if (sign === "-") totalNanos = -totalNanos;
+
+  const seconds = BigInt(Math.trunc(totalNanos / 1e9));
+  const nanos = Math.round(totalNanos % 1e9);
+  return new CelDuration(seconds, nanos);
+}
+
+export function celDuration(v: unknown): CelDuration | undefined {
+  if (isCelDuration(v)) return v; // identity
+  if (isStr(v)) return parseDurationString(v);
+  return undefined;
+}
+
+// ── Timestamp Helper ─────────────────────────────────────────────────────
+
+export function celTimestamp(v: unknown): Date | undefined {
+  if (v instanceof Date) return v; // identity
+  if (isStr(v)) {
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return undefined;
+    return d;
+  }
+  if (isInt(v)) {
+    // int -> timestamp: interpret as seconds since epoch
+    return new Date(Number(v) * 1000);
+  }
+  return undefined;
 }
 
 // ── Macro Helpers ──────────────────────────────────────────────────────────
@@ -828,6 +952,36 @@ export function celAnd(a: unknown, b: () => unknown): boolean | undefined {
   return undefined;
 }
 
+/**
+ * CEL logical OR for N operands (commutative error absorption).
+ * Evaluates all operands eagerly.
+ * true wins over error, error wins over false.
+ */
+export function celOrN(operands: (() => unknown)[]): boolean | undefined {
+  let hasError = false;
+  for (const op of operands) {
+    const v = op();
+    if (v === true) return true;
+    if (v !== false) hasError = true;
+  }
+  return hasError ? undefined : false;
+}
+
+/**
+ * CEL logical AND for N operands (commutative error absorption).
+ * Evaluates all operands eagerly.
+ * false wins over error, error wins over true.
+ */
+export function celAndN(operands: (() => unknown)[]): boolean | undefined {
+  let hasError = false;
+  for (const op of operands) {
+    const v = op();
+    if (v === false) return false;
+    if (v !== true) hasError = true;
+  }
+  return hasError ? undefined : true;
+}
+
 // ── createRuntime ──────────────────────────────────────────────────────────
 
 /** Create the _rt object that generated code references */
@@ -851,6 +1005,7 @@ export function createRuntime() {
     in: celIn,
     size: celSize,
     index: celIndex,
+    select: celSelect,
     // Strings
     contains: celContains,
     startsWith: celStartsWith,
@@ -876,11 +1031,16 @@ export function createRuntime() {
     not: celNot,
     or: celOr,
     and: celAnd,
+    orN: celOrN,
+    andN: celAndN,
     // Map / Struct / Comprehension
     makeMap: celMakeMap,
     makeStruct: celMakeStruct,
     has: celHas,
     comprehension: celComprehension,
+    // Type conversions (timestamp/duration)
+    duration: celDuration,
+    timestamp: celTimestamp,
     // Types
     CelUint,
     celUint: (n: bigint) => new CelUint(n),
