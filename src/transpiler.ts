@@ -138,6 +138,9 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
     TestAllTypes: testAllTypesType,
     TestRequired: testRequiredType,
     GlobalEnum: globalEnum,
+    // Network extension type constants
+    "net.IP": new CelType("net.IP"),
+    "net.CIDR": new CelType("net.CIDR"),
   };
 
   const evaluate = (bindings?: Record<string, unknown>): unknown => {

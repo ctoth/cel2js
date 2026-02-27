@@ -1,5 +1,16 @@
 import type { CelValue } from "./types.js";
-import { CelOptional, CelType, CelUint, isCelOptional, isCelType, isCelUint } from "./types.js";
+import {
+  CelCIDR,
+  CelIP,
+  CelOptional,
+  CelType,
+  CelUint,
+  isCelCIDR,
+  isCelIP,
+  isCelOptional,
+  isCelType,
+  isCelUint,
+} from "./types.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -290,6 +301,18 @@ export function celEq(a: unknown, b: unknown): boolean | undefined {
   // CelDuration equality
   if (isCelDuration(a) && isCelDuration(b)) {
     return a.seconds === b.seconds && a.nanos === b.nanos;
+  }
+
+  // CelIP equality
+  if (isCelIP(a) && isCelIP(b)) {
+    return ipBytesEqual(a, b);
+  }
+
+  // CelCIDR equality
+  if (isCelCIDR(a) && isCelCIDR(b)) {
+    if (a.prefix !== b.prefix) return false;
+    if (a.ip.bytes.length !== b.ip.bytes.length) return false;
+    return ipBytesEqual(a.ip, b.ip);
   }
 
   // CelOptional equality
@@ -1307,6 +1330,8 @@ export function celToString(v: unknown): string | undefined {
   if (isCelType(v)) return v.name;
   if (isCelTimestamp(v)) return timestampToString(v);
   if (isCelDuration(v)) return durationToString(v);
+  if (isCelIP(v)) return ipToString(v);
+  if (isCelCIDR(v)) return v._str;
   return undefined;
 }
 
@@ -1359,6 +1384,8 @@ export function celType(v: unknown): CelType {
   if (isCelOptional(v)) return new CelType("optional_type");
   if (isCelTimestamp(v)) return new CelType("google.protobuf.Timestamp");
   if (isCelDuration(v)) return new CelType("google.protobuf.Duration");
+  if (isCelIP(v)) return new CelType("net.IP");
+  if (isCelCIDR(v)) return new CelType("net.CIDR");
   return new CelType("unknown");
 }
 
@@ -2687,6 +2714,433 @@ function celBase64Decode(a: unknown): Uint8Array | undefined {
   return new Uint8Array(bytes);
 }
 
+// ── Network Extension Helpers ─────────────────────────────────────────────
+
+/**
+ * Parse an IPv4 address string into a 4-byte Uint8Array.
+ * Returns undefined on invalid input.
+ */
+function parseIPv4(s: string): Uint8Array | undefined {
+  const parts = s.split(".");
+  if (parts.length !== 4) return undefined;
+  const bytes = new Uint8Array(4);
+  for (let i = 0; i < 4; i++) {
+    const part = parts[i] as string;
+    // Reject empty, leading zeros (except "0"), non-digit chars
+    if (part === "" || (part.length > 1 && part[0] === "0")) return undefined;
+    for (let j = 0; j < part.length; j++) {
+      const ch = part.charCodeAt(j);
+      if (ch < 48 || ch > 57) return undefined; // not a digit
+    }
+    const n = Number(part);
+    if (n < 0 || n > 255) return undefined;
+    bytes[i] = n;
+  }
+  return bytes;
+}
+
+/**
+ * Parse an IPv6 address string into a 16-byte Uint8Array.
+ * Supports :: shorthand and hex groups.
+ * Returns undefined on invalid input.
+ */
+function parseIPv6(s: string): Uint8Array | undefined {
+  // Reject zone IDs
+  if (s.includes("%")) return undefined;
+
+  const groups: number[] = [];
+  let doubleColonIdx = -1;
+
+  // Handle leading :: (e.g. "::1" or "::")
+  if (s.startsWith("::")) {
+    doubleColonIdx = 0;
+    s = s.substring(2);
+    if (s === "") {
+      // Just "::" -> all zeros
+      return new Uint8Array(16);
+    }
+  } else if (s.startsWith(":")) {
+    return undefined; // Single leading colon is invalid
+  }
+
+  // Handle trailing ::
+  if (s.endsWith("::")) {
+    if (doubleColonIdx !== -1) return undefined; // Multiple ::
+    doubleColonIdx = -2; // Marker; will be set properly below
+    s = s.substring(0, s.length - 2);
+  } else if (s.endsWith(":")) {
+    return undefined; // Single trailing colon is invalid
+  }
+
+  const rawParts = s.split(":");
+  for (let i = 0; i < rawParts.length; i++) {
+    const part = rawParts[i] as string;
+    if (part === "") {
+      // This is a :: in the middle
+      if (doubleColonIdx !== -1 && doubleColonIdx !== 0) return undefined; // Multiple ::
+      doubleColonIdx = groups.length;
+      continue;
+    }
+    if (part.length > 4) return undefined;
+    const val = Number.parseInt(part, 16);
+    if (Number.isNaN(val) || val < 0 || val > 0xffff) return undefined;
+    groups.push(val);
+  }
+
+  // Fix double colon at end marker
+  if (doubleColonIdx === -2) {
+    doubleColonIdx = groups.length;
+  }
+
+  const bytes = new Uint8Array(16);
+  if (doubleColonIdx !== -1) {
+    // Expand ::
+    const missing = 8 - groups.length;
+    if (missing < 0) return undefined;
+    // Fill before ::
+    for (let i = 0; i < doubleColonIdx; i++) {
+      const g = groups[i] as number;
+      bytes[i * 2] = (g >> 8) & 0xff;
+      bytes[i * 2 + 1] = g & 0xff;
+    }
+    // Zeros for :: (already zero-initialized)
+    // Fill after ::
+    const afterStart = doubleColonIdx + missing;
+    for (let i = doubleColonIdx; i < groups.length; i++) {
+      const g = groups[i] as number;
+      const idx = afterStart + (i - doubleColonIdx);
+      bytes[idx * 2] = (g >> 8) & 0xff;
+      bytes[idx * 2 + 1] = g & 0xff;
+    }
+  } else {
+    if (groups.length !== 8) return undefined;
+    for (let i = 0; i < 8; i++) {
+      const g = groups[i] as number;
+      bytes[i * 2] = (g >> 8) & 0xff;
+      bytes[i * 2 + 1] = g & 0xff;
+    }
+  }
+  return bytes;
+}
+
+/**
+ * Parse an IP address string. Returns CelIP or undefined on error.
+ */
+function parseIP(s: string): CelIP | undefined {
+  // Reject zone IDs
+  if (s.includes("%")) return undefined;
+
+  // Try IPv4 first
+  const v4 = parseIPv4(s);
+  if (v4 !== undefined) return new CelIP(v4, s);
+
+  // Try IPv6
+  const v6 = parseIPv6(s);
+  if (v6 !== undefined) {
+    return new CelIP(v6, canonicalIPv6(v6));
+  }
+  return undefined;
+}
+
+/**
+ * Check if a string is an IPv4-mapped IPv6 address in dotted-decimal form.
+ * e.g. "::ffff:192.168.0.1" — the literal dotted decimal after ::ffff:
+ * Pure hex forms like "::ffff:c0a8:1" are NOT matched.
+ */
+function isIPv4MappedString(s: string): boolean {
+  // Match "::ffff:" followed by dotted decimal digits
+  const lower = s.toLowerCase();
+  const idx = lower.indexOf("::ffff:");
+  if (idx === -1) return false;
+  const after = s.substring(idx + 7);
+  // If the part after ::ffff: contains a dot, it's dotted-decimal form
+  return after.includes(".");
+}
+
+/** Format a 16-byte IPv6 address in canonical (RFC 5952) form */
+function canonicalIPv6(bytes: Uint8Array): string {
+  // Read 8 groups
+  const groups: number[] = [];
+  for (let i = 0; i < 16; i += 2) {
+    groups.push(((bytes[i] as number) << 8) | (bytes[i + 1] as number));
+  }
+
+  // Find longest run of zeros for :: compression (RFC 5952)
+  let bestStart = -1;
+  let bestLen = 0;
+  let curStart = -1;
+  let curLen = 0;
+  for (let i = 0; i < 8; i++) {
+    if (groups[i] === 0) {
+      if (curStart === -1) {
+        curStart = i;
+        curLen = 1;
+      } else {
+        curLen++;
+      }
+    } else {
+      if (curLen > bestLen && curLen >= 2) {
+        bestStart = curStart;
+        bestLen = curLen;
+      }
+      curStart = -1;
+      curLen = 0;
+    }
+  }
+  if (curLen > bestLen && curLen >= 2) {
+    bestStart = curStart;
+    bestLen = curLen;
+  }
+
+  const parts: string[] = [];
+  let i = 0;
+  while (i < 8) {
+    if (i === bestStart) {
+      parts.push("");
+      if (i === 0) parts.push(""); // Leading ::
+      i += bestLen;
+      if (i === 8) parts.push(""); // Trailing ::
+    } else {
+      parts.push((groups[i] as number).toString(16));
+      i++;
+    }
+  }
+  return parts.join(":");
+}
+
+/** Format a CelIP as a string */
+function ipToString(ip: CelIP): string {
+  if (ip.bytes.length === 4) {
+    return `${ip.bytes[0]}.${ip.bytes[1]}.${ip.bytes[2]}.${ip.bytes[3]}`;
+  }
+  return canonicalIPv6(ip.bytes);
+}
+
+/** Compare two IP byte arrays for equality. IPv4-mapped IPv6 == equivalent IPv4. */
+function ipBytesEqual(a: CelIP, b: CelIP): boolean {
+  if (a.bytes.length === b.bytes.length) {
+    for (let i = 0; i < a.bytes.length; i++) {
+      if (a.bytes[i] !== b.bytes[i]) return false;
+    }
+    return true;
+  }
+  // Cross-family: convert IPv4 to IPv4-mapped IPv6 for comparison
+  const v4 = a.bytes.length === 4 ? a : b;
+  const v6 = a.bytes.length === 4 ? b : a;
+  // v6 must be ::ffff:x.x.x.x or the raw 4-byte equivalent embedded in 16 bytes
+  // Check if v6 is IPv4-mapped
+  for (let i = 0; i < 10; i++) {
+    if (v6.bytes[i] !== 0) return false;
+  }
+  if (v6.bytes[10] !== 0xff || v6.bytes[11] !== 0xff) return false;
+  return (
+    v6.bytes[12] === v4.bytes[0] &&
+    v6.bytes[13] === v4.bytes[1] &&
+    v6.bytes[14] === v4.bytes[2] &&
+    v6.bytes[15] === v4.bytes[3]
+  );
+}
+
+// ── Network extension: CEL functions ──────────────────────────────────────
+
+/** ip(string) — parse an IP address. Also handles cidr.ip() when called on a CelCIDR. */
+function celNetIP(s: unknown): CelIP | undefined {
+  // Handle cidr.ip() — when called as a member method on a CIDR object
+  if (isCelCIDR(s)) return s.ip;
+  if (!isStr(s)) return undefined;
+  // Reject zone IDs
+  if (s.includes("%")) return undefined;
+  // Reject IPv4-mapped IPv6 in dotted-decimal form (e.g. "::ffff:192.168.0.1")
+  // but allow pure hex form (e.g. "::ffff:c0a8:1")
+  if (isIPv4MappedString(s)) return undefined;
+  const result = parseIP(s);
+  return result ?? undefined;
+}
+
+/** cidr(string) — parse a CIDR range. Returns CelCIDR or undefined (error). */
+function celNetCIDR(s: unknown): CelCIDR | undefined {
+  if (!isStr(s)) return undefined;
+  const slashIdx = s.lastIndexOf("/");
+  if (slashIdx === -1) return undefined;
+  const ipPart = s.substring(0, slashIdx);
+  const prefixPart = s.substring(slashIdx + 1);
+  if (prefixPart === "" || prefixPart.includes(".")) return undefined;
+  // Check for zone in IP part
+  if (ipPart.includes("%")) return undefined;
+  const prefix = Number(prefixPart);
+  if (Number.isNaN(prefix) || prefix < 0) return undefined;
+  // Check for IPv4-mapped IPv6 in dotted-decimal form in CIDR
+  if (isIPv4MappedString(ipPart)) return undefined;
+  const ip = parseIP(ipPart);
+  if (ip === undefined) return undefined;
+  const maxPrefix = ip.bytes.length === 4 ? 32 : 128;
+  if (prefix > maxPrefix) return undefined;
+  return new CelCIDR(ip, prefix, `${ipToString(ip)}/${prefix}`);
+}
+
+/** isIP(string) — returns true if the string is a valid IP address */
+function celIsIP(s: unknown): boolean | undefined {
+  if (!isStr(s)) return undefined;
+  return parseIP(s) !== undefined;
+}
+
+/** ip.isCanonical(string) — returns true if the IP string is in canonical form */
+function celIPIsCanonical(s: unknown): boolean | undefined {
+  if (!isStr(s)) return undefined;
+  const ip = parseIP(s);
+  if (ip === undefined) return undefined; // error for invalid addresses
+  return ipToString(ip) === s;
+}
+
+/** ip.family() — returns 4 for IPv4 or 6 for IPv6 */
+function celIPFamily(target: unknown): bigint | undefined {
+  if (!isCelIP(target)) return undefined;
+  return BigInt(target.family());
+}
+
+/** ip.isUnspecified() — true if the address is all zeros */
+function celIPIsUnspecified(target: unknown): boolean | undefined {
+  if (!isCelIP(target)) return undefined;
+  for (let i = 0; i < target.bytes.length; i++) {
+    if (target.bytes[i] !== 0) return false;
+  }
+  return true;
+}
+
+/** ip.isLoopback() — true if the address is a loopback address */
+function celIPIsLoopback(target: unknown): boolean | undefined {
+  if (!isCelIP(target)) return undefined;
+  if (target.bytes.length === 4) {
+    return target.bytes[0] === 127;
+  }
+  // IPv6: ::1
+  for (let i = 0; i < 15; i++) {
+    if (target.bytes[i] !== 0) return false;
+  }
+  return target.bytes[15] === 1;
+}
+
+/** ip.isGlobalUnicast() — true if the address is a global unicast address */
+function celIPIsGlobalUnicast(target: unknown): boolean | undefined {
+  if (!isCelIP(target)) return undefined;
+  // Not loopback, not unspecified, not multicast, not link-local
+  if (celIPIsLoopback(target)) return false;
+  if (celIPIsUnspecified(target)) return false;
+  if (celIPIsLinkLocalMulticast(target)) return false;
+  if (celIPIsLinkLocalUnicast(target)) return false;
+  if (target.bytes.length === 4) {
+    // IPv4: not 255.255.255.255 (broadcast), not multicast (224-239.x.x.x)
+    if (
+      target.bytes[0] === 255 &&
+      target.bytes[1] === 255 &&
+      target.bytes[2] === 255 &&
+      target.bytes[3] === 255
+    )
+      return false;
+    if ((target.bytes[0] as number) >= 224 && (target.bytes[0] as number) <= 239) return false;
+    return true;
+  }
+  // IPv6: not multicast (ff00::/8)
+  if (target.bytes[0] === 0xff) return false;
+  return true;
+}
+
+/** ip.isLinkLocalMulticast() — true if the address is a link-local multicast address */
+function celIPIsLinkLocalMulticast(target: unknown): boolean | undefined {
+  if (!isCelIP(target)) return undefined;
+  if (target.bytes.length === 4) {
+    // IPv4: 224.0.0.0/24
+    return target.bytes[0] === 224 && target.bytes[1] === 0 && target.bytes[2] === 0;
+  }
+  // IPv6: ff02::/16
+  return target.bytes[0] === 0xff && target.bytes[1] === 0x02;
+}
+
+/** ip.isLinkLocalUnicast() — true if the address is a link-local unicast address */
+function celIPIsLinkLocalUnicast(target: unknown): boolean | undefined {
+  if (!isCelIP(target)) return undefined;
+  if (target.bytes.length === 4) {
+    // IPv4: 169.254.0.0/16
+    return target.bytes[0] === 169 && target.bytes[1] === 254;
+  }
+  // IPv6: fe80::/10
+  return target.bytes[0] === 0xfe && ((target.bytes[1] as number) & 0xc0) === 0x80;
+}
+
+/** cidr.containsIP(ip_or_string) — true if the IP is within the CIDR range */
+function celCIDRContainsIP(target: unknown, ipArg: unknown): boolean | undefined {
+  if (!isCelCIDR(target)) return undefined;
+  let ip: CelIP | undefined;
+  if (isCelIP(ipArg)) {
+    ip = ipArg;
+  } else if (isStr(ipArg)) {
+    ip = parseIP(ipArg);
+    if (ip === undefined) return undefined;
+  } else {
+    return undefined;
+  }
+  // Both must be same address family
+  if (target.ip.bytes.length !== ip.bytes.length) return false;
+  return ipInCIDR(ip, target);
+}
+
+/** cidr.containsCIDR(cidr_or_string) — true if the inner CIDR is fully contained */
+function celCIDRContainsCIDR(target: unknown, cidrArg: unknown): boolean | undefined {
+  if (!isCelCIDR(target)) return undefined;
+  let inner: CelCIDR | undefined;
+  if (isCelCIDR(cidrArg)) {
+    inner = cidrArg;
+  } else if (isStr(cidrArg)) {
+    inner = celNetCIDR(cidrArg) ?? undefined;
+    if (inner === undefined) return undefined;
+  } else {
+    return undefined;
+  }
+  // Both must be same address family
+  if (target.ip.bytes.length !== inner.ip.bytes.length) return false;
+  // Inner prefix must be >= outer prefix (more specific or equal)
+  if (inner.prefix < target.prefix) return false;
+  // The network address of the inner must be within the outer
+  return ipInCIDR(inner.ip, target);
+}
+
+/** Check if an IP is within a CIDR range */
+function ipInCIDR(ip: CelIP, cidr: CelCIDR): boolean {
+  const totalBits = ip.bytes.length * 8;
+  const prefix = cidr.prefix;
+  for (let bit = 0; bit < totalBits; bit++) {
+    if (bit >= prefix) break;
+    const byteIdx = Math.floor(bit / 8);
+    const bitIdx = 7 - (bit % 8);
+    const ipBit = ((ip.bytes[byteIdx] as number) >> bitIdx) & 1;
+    const cidrBit = ((cidr.ip.bytes[byteIdx] as number) >> bitIdx) & 1;
+    if (ipBit !== cidrBit) return false;
+  }
+  return true;
+}
+
+/** cidr.masked() — apply the mask to get the network address CIDR */
+function celCIDRMasked(target: unknown): CelCIDR | undefined {
+  if (!isCelCIDR(target)) return undefined;
+  const masked = new Uint8Array(target.ip.bytes.length);
+  const prefix = target.prefix;
+  for (let bit = 0; bit < target.ip.bytes.length * 8; bit++) {
+    if (bit >= prefix) break;
+    const byteIdx = Math.floor(bit / 8);
+    const bitIdx = 7 - (bit % 8);
+    masked[byteIdx] =
+      (masked[byteIdx] as number) | ((target.ip.bytes[byteIdx] as number) & (1 << bitIdx));
+  }
+  const maskedIP = new CelIP(masked, ipToString(new CelIP(masked, "")));
+  return new CelCIDR(maskedIP, prefix, `${ipToString(maskedIP)}/${prefix}`);
+}
+
+/** cidr.prefixLength() — get the prefix length */
+function celCIDRPrefixLength(target: unknown): bigint | undefined {
+  if (!isCelCIDR(target)) return undefined;
+  return BigInt(target.prefix);
+}
+
 // ── Optional Helpers ───────────────────────────────────────────────────────
 
 /** Check if a value is a "zero value" for optional.ofNonZeroValue() */
@@ -3104,6 +3558,25 @@ export function createRuntime(options?: RuntimeOptions) {
     // Encoder extensions
     "base64.encode": celBase64Encode,
     "base64.decode": celBase64Decode,
+    // Network extension
+    ip: celNetIP,
+    cidr: celNetCIDR,
+    isIP: celIsIP,
+    "ip.isCanonical": celIPIsCanonical,
+    family: celIPFamily,
+    isUnspecified: celIPIsUnspecified,
+    isLoopback: celIPIsLoopback,
+    isGlobalUnicast: celIPIsGlobalUnicast,
+    isLinkLocalMulticast: celIPIsLinkLocalMulticast,
+    isLinkLocalUnicast: celIPIsLinkLocalUnicast,
+    containsIP: celCIDRContainsIP,
+    containsCIDR: celCIDRContainsCIDR,
+    masked: celCIDRMasked,
+    prefixLength: celCIDRPrefixLength,
+    CelIP,
+    isCelIP,
+    CelCIDR,
+    isCelCIDR,
     // Optional extension
     "optional.none": celOptionalNone,
     "optional.of": celOptionalOf,

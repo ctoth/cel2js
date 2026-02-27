@@ -329,7 +329,7 @@ const GLOBAL_FUNC_TO_RT: Record<string, string> = {
 };
 
 /** Known extension namespaces — calls like math.fn() route to _rt["math.fn"]() */
-const NAMESPACE_PREFIXES = new Set(["math", "base64", "optional", "proto"]);
+const NAMESPACE_PREFIXES = new Set(["math", "base64", "optional", "proto", "ip"]);
 
 /** Optional member methods — these get special routing to optionalXxx runtime methods */
 const OPTIONAL_MEMBER_METHODS = new Set([

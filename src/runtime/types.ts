@@ -56,6 +56,57 @@ export function isCelOptional(value: unknown): value is CelOptional {
   return value instanceof CelOptional;
 }
 
+// ---------------------------------------------------------------------------
+// Network extension types: IP addresses and CIDR ranges
+// ---------------------------------------------------------------------------
+
+/**
+ * CEL IP address value.
+ * Stores the IP as a Uint8Array of 4 bytes (IPv4) or 16 bytes (IPv6).
+ */
+export class CelIP {
+  /** Raw bytes: 4 for IPv4, 16 for IPv6 */
+  readonly bytes: Uint8Array;
+  /** Original string representation (canonical form) */
+  readonly _str: string;
+
+  constructor(bytes: Uint8Array, str: string) {
+    this.bytes = bytes;
+    this._str = str;
+  }
+
+  /** Returns 4 for IPv4, 6 for IPv6 */
+  family(): 4 | 6 {
+    return this.bytes.length === 4 ? 4 : 6;
+  }
+}
+
+/** Check if a value is a CelIP */
+export function isCelIP(value: unknown): value is CelIP {
+  return value instanceof CelIP;
+}
+
+/**
+ * CEL CIDR range value.
+ * Stores the IP address and prefix length.
+ */
+export class CelCIDR {
+  readonly ip: CelIP;
+  readonly prefix: number;
+  readonly _str: string;
+
+  constructor(ip: CelIP, prefix: number, str: string) {
+    this.ip = ip;
+    this.prefix = prefix;
+    this._str = str;
+  }
+}
+
+/** Check if a value is a CelCIDR */
+export function isCelCIDR(value: unknown): value is CelCIDR {
+  return value instanceof CelCIDR;
+}
+
 /** CEL value types that our transpiler can produce */
 export type CelValue =
   | null
@@ -68,4 +119,6 @@ export type CelValue =
   | CelValue[] // list
   | Map<CelValue, CelValue> // map
   | CelType // type value
-  | CelOptional; // optional value
+  | CelOptional // optional value
+  | CelIP // IP address
+  | CelCIDR; // CIDR range
