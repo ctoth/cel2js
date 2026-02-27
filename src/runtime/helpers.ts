@@ -1,0 +1,726 @@
+import type { CelValue } from "./types.js";
+import { CelType, CelUint, isCelType, isCelUint } from "./types.js";
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+const UINT64_MAX = 2n ** 64n - 1n;
+
+// ── Internal helpers ───────────────────────────────────────────────────────
+
+/** Check if a bigint is within int64 range */
+function inInt64Range(v: bigint): boolean {
+  return v >= INT64_MIN && v <= INT64_MAX;
+}
+
+/** Check if a bigint is within uint64 range */
+function inUint64Range(v: bigint): boolean {
+  return v >= 0n && v <= UINT64_MAX;
+}
+
+/** Check if a value is a plain bigint (int, not CelUint) */
+function isInt(v: unknown): v is bigint {
+  return typeof v === "bigint";
+}
+
+/** Check if a value is a double (JS number) */
+function isDouble(v: unknown): v is number {
+  return typeof v === "number";
+}
+
+/** Check if a value is a string */
+function isStr(v: unknown): v is string {
+  return typeof v === "string";
+}
+
+/** Check if a value is a boolean */
+function isBool(v: unknown): v is boolean {
+  return typeof v === "boolean";
+}
+
+/** Check if a value is a Uint8Array (bytes) */
+function isBytes(v: unknown): v is Uint8Array {
+  return v instanceof Uint8Array;
+}
+
+/** Check if a value is a list (Array) */
+function isList(v: unknown): v is CelValue[] {
+  return Array.isArray(v);
+}
+
+/** Check if a value is a map (Map) */
+function isMap(v: unknown): v is Map<CelValue, CelValue> {
+  return v instanceof Map;
+}
+
+/** Check if a value is numeric (int, uint, or double) */
+function isNumeric(v: unknown): boolean {
+  return isInt(v) || isCelUint(v) || isDouble(v);
+}
+
+/** Convert any numeric CEL value to a JS number for comparison */
+function toNumber(v: bigint | CelUint | number): number {
+  if (isInt(v)) return Number(v);
+  if (isCelUint(v)) return Number(v.value);
+  return v;
+}
+
+// ── Arithmetic Helpers ─────────────────────────────────────────────────────
+
+export function celAdd(a: unknown, b: unknown): CelValue | undefined {
+  // int + int
+  if (isInt(a) && isInt(b)) {
+    const r = a + b;
+    return inInt64Range(r) ? r : undefined;
+  }
+  // uint + uint
+  if (isCelUint(a) && isCelUint(b)) {
+    const r = a.value + b.value;
+    return inUint64Range(r) ? new CelUint(r) : undefined;
+  }
+  // double + double
+  if (isDouble(a) && isDouble(b)) return a + b;
+  // string + string
+  if (isStr(a) && isStr(b)) return a + b;
+  // list + list
+  if (isList(a) && isList(b)) return [...a, ...b];
+  // bytes + bytes
+  if (isBytes(a) && isBytes(b)) {
+    const r = new Uint8Array(a.length + b.length);
+    r.set(a, 0);
+    r.set(b, a.length);
+    return r;
+  }
+  return undefined;
+}
+
+export function celSub(a: unknown, b: unknown): CelValue | undefined {
+  if (isInt(a) && isInt(b)) {
+    const r = a - b;
+    return inInt64Range(r) ? r : undefined;
+  }
+  if (isCelUint(a) && isCelUint(b)) {
+    const r = a.value - b.value;
+    return inUint64Range(r) ? new CelUint(r) : undefined;
+  }
+  if (isDouble(a) && isDouble(b)) return a - b;
+  return undefined;
+}
+
+export function celMul(a: unknown, b: unknown): CelValue | undefined {
+  if (isInt(a) && isInt(b)) {
+    const r = a * b;
+    return inInt64Range(r) ? r : undefined;
+  }
+  if (isCelUint(a) && isCelUint(b)) {
+    const r = a.value * b.value;
+    return inUint64Range(r) ? new CelUint(r) : undefined;
+  }
+  if (isDouble(a) && isDouble(b)) return a * b;
+  return undefined;
+}
+
+export function celDiv(a: unknown, b: unknown): CelValue | undefined {
+  if (isInt(a) && isInt(b)) {
+    if (b === 0n) return undefined;
+    // Handle int64 overflow: -2^63 / -1 overflows
+    if (a === INT64_MIN && b === -1n) return undefined;
+    // BigInt division truncates toward zero (which is what CEL wants)
+    return a / b;
+  }
+  if (isCelUint(a) && isCelUint(b)) {
+    if (b.value === 0n) return undefined;
+    return new CelUint(a.value / b.value);
+  }
+  if (isDouble(a) && isDouble(b)) {
+    if (b === 0) return undefined;
+    return a / b;
+  }
+  return undefined;
+}
+
+export function celMod(a: unknown, b: unknown): CelValue | undefined {
+  if (isInt(a) && isInt(b)) {
+    if (b === 0n) return undefined;
+    return a % b;
+  }
+  if (isCelUint(a) && isCelUint(b)) {
+    if (b.value === 0n) return undefined;
+    return new CelUint(a.value % b.value);
+  }
+  return undefined;
+}
+
+export function celNeg(a: unknown): CelValue | undefined {
+  if (isInt(a)) {
+    const r = -a;
+    return inInt64Range(r) ? r : undefined;
+  }
+  if (isDouble(a)) return -a;
+  // uint negation is not allowed in CEL
+  return undefined;
+}
+
+// ── Comparison Helpers ─────────────────────────────────────────────────────
+
+/**
+ * Deep equality for CEL values. Supports cross-numeric comparison.
+ */
+export function celEq(a: unknown, b: unknown): boolean | undefined {
+  // null checks
+  if (a === null && b === null) return true;
+  if (a === null || b === null) return false;
+
+  // bool
+  if (isBool(a) && isBool(b)) return a === b;
+
+  // Cross-numeric equality
+  if (isNumeric(a) && isNumeric(b)) {
+    return numericCompare(a as bigint | CelUint | number, b as bigint | CelUint | number) === 0;
+  }
+
+  // string
+  if (isStr(a) && isStr(b)) return a === b;
+
+  // bytes
+  if (isBytes(a) && isBytes(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
+  // list
+  if (isList(a) && isList(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      const eq = celEq(a[i], b[i]);
+      if (eq !== true) return eq; // propagate false or undefined
+    }
+    return true;
+  }
+
+  // map
+  if (isMap(a) && isMap(b)) {
+    if (a.size !== b.size) return false;
+    for (const [k, v] of a) {
+      const bv = mapGet(b, k);
+      if (bv === undefined && !mapHas(b, k)) return false;
+      const eq = celEq(v, bv);
+      if (eq !== true) return eq;
+    }
+    return true;
+  }
+
+  // CelType
+  if (isCelType(a) && isCelType(b)) return a.name === b.name;
+
+  // Type mismatch for non-numeric types
+  return undefined;
+}
+
+export function celNe(a: unknown, b: unknown): boolean | undefined {
+  const eq = celEq(a, b);
+  if (eq === undefined) return undefined;
+  return !eq;
+}
+
+/** Compare two numeric values. Returns -1, 0, 1, or NaN for incomparable. */
+function numericCompare(a: bigint | CelUint | number, b: bigint | CelUint | number): number {
+  // If both are exact integers (int or uint), compare via bigint for precision
+  const aIsExactInt = isInt(a) || isCelUint(a);
+  const bIsExactInt = isInt(b) || isCelUint(b);
+  if (aIsExactInt && bIsExactInt) {
+    const ai = isInt(a) ? a : (a as CelUint).value;
+    const bi = isInt(b) ? b : (b as CelUint).value;
+    return ai < bi ? -1 : ai > bi ? 1 : 0;
+  }
+  // At least one is double, compare as numbers
+  const an = toNumber(a);
+  const bn = toNumber(b);
+  if (Number.isNaN(an) || Number.isNaN(bn)) return Number.NaN;
+  return an < bn ? -1 : an > bn ? 1 : 0;
+}
+
+export function celLt(a: unknown, b: unknown): boolean | undefined {
+  if (isNumeric(a) && isNumeric(b)) {
+    const c = numericCompare(a as bigint | CelUint | number, b as bigint | CelUint | number);
+    return Number.isNaN(c) ? false : c < 0;
+  }
+  if (isStr(a) && isStr(b)) return a < b;
+  if (isBool(a) && isBool(b)) return !a && b; // false < true
+  if (isBytes(a) && isBytes(b)) return bytesCompare(a, b) < 0;
+  return undefined;
+}
+
+export function celLe(a: unknown, b: unknown): boolean | undefined {
+  if (isNumeric(a) && isNumeric(b)) {
+    const c = numericCompare(a as bigint | CelUint | number, b as bigint | CelUint | number);
+    return Number.isNaN(c) ? false : c <= 0;
+  }
+  if (isStr(a) && isStr(b)) return a <= b;
+  if (isBool(a) && isBool(b)) return !a || b; // false <= true, false <= false, true <= true
+  if (isBytes(a) && isBytes(b)) return bytesCompare(a, b) <= 0;
+  return undefined;
+}
+
+export function celGt(a: unknown, b: unknown): boolean | undefined {
+  if (isNumeric(a) && isNumeric(b)) {
+    const c = numericCompare(a as bigint | CelUint | number, b as bigint | CelUint | number);
+    return Number.isNaN(c) ? false : c > 0;
+  }
+  if (isStr(a) && isStr(b)) return a > b;
+  if (isBool(a) && isBool(b)) return a && !b;
+  if (isBytes(a) && isBytes(b)) return bytesCompare(a, b) > 0;
+  return undefined;
+}
+
+export function celGe(a: unknown, b: unknown): boolean | undefined {
+  if (isNumeric(a) && isNumeric(b)) {
+    const c = numericCompare(a as bigint | CelUint | number, b as bigint | CelUint | number);
+    return Number.isNaN(c) ? false : c >= 0;
+  }
+  if (isStr(a) && isStr(b)) return a >= b;
+  if (isBool(a) && isBool(b)) return a || !b;
+  if (isBytes(a) && isBytes(b)) return bytesCompare(a, b) >= 0;
+  return undefined;
+}
+
+/** Lexicographic comparison for bytes */
+function bytesCompare(a: Uint8Array, b: Uint8Array): number {
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const av = a[i];
+    const bv = b[i];
+    if (av !== undefined && bv !== undefined && av !== bv) return av < bv ? -1 : 1;
+  }
+  return a.length - b.length;
+}
+
+// ── Map lookup helpers (deep key matching) ─────────────────────────────────
+
+/** Get a value from a Map using deep key equality */
+function mapGet(m: Map<CelValue, CelValue>, key: CelValue): CelValue | undefined {
+  // Fast path: try direct lookup first
+  if (m.has(key)) return m.get(key);
+  // Slow path: deep comparison for complex keys
+  for (const [k, v] of m) {
+    if (celEq(k, key) === true) return v;
+  }
+  return undefined;
+}
+
+/** Check if a Map contains a key using deep equality */
+function mapHas(m: Map<CelValue, CelValue>, key: CelValue): boolean {
+  if (m.has(key)) return true;
+  for (const [k] of m) {
+    if (celEq(k, key) === true) return true;
+  }
+  return false;
+}
+
+// ── Collection Helpers ─────────────────────────────────────────────────────
+
+export function celIn(elem: unknown, collection: unknown): boolean | undefined {
+  if (isList(collection)) {
+    for (const item of collection) {
+      const eq = celEq(elem, item);
+      if (eq === true) return true;
+    }
+    return false;
+  }
+  if (isMap(collection)) {
+    return mapHas(collection, elem as CelValue);
+  }
+  return undefined;
+}
+
+export function celSize(v: unknown): bigint | undefined {
+  if (isStr(v)) {
+    // Unicode codepoint count using the iterator
+    let count = 0n;
+    for (const _ of v) {
+      count++;
+    }
+    return count;
+  }
+  if (isList(v)) return BigInt(v.length);
+  if (isMap(v)) return BigInt(v.size);
+  if (isBytes(v)) return BigInt(v.length);
+  return undefined;
+}
+
+export function celIndex(obj: unknown, key: unknown): CelValue | undefined {
+  if (isList(obj)) {
+    // List index must be int
+    if (!isInt(key)) return undefined;
+    const idx = Number(key);
+    if (idx < 0 || idx >= obj.length) return undefined;
+    return obj[idx];
+  }
+  if (isMap(obj)) {
+    return mapGet(obj, key as CelValue);
+  }
+  return undefined;
+}
+
+// ── String Helpers ─────────────────────────────────────────────────────────
+
+export function celContains(s: unknown, sub: unknown): boolean | undefined {
+  if (isStr(s) && isStr(sub)) return s.includes(sub);
+  return undefined;
+}
+
+export function celStartsWith(s: unknown, prefix: unknown): boolean | undefined {
+  if (isStr(s) && isStr(prefix)) return s.startsWith(prefix);
+  return undefined;
+}
+
+export function celEndsWith(s: unknown, suffix: unknown): boolean | undefined {
+  if (isStr(s) && isStr(suffix)) return s.endsWith(suffix);
+  return undefined;
+}
+
+export function celMatches(s: unknown, pattern: unknown): boolean | undefined {
+  if (isStr(s) && isStr(pattern)) {
+    try {
+      // Wrap pattern to match entire string (CEL matches() semantics)
+      const re = new RegExp(`^(?:${pattern})$`);
+      return re.test(s);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+// ── Type Conversion Helpers ────────────────────────────────────────────────
+
+export function celToInt(v: unknown): bigint | undefined {
+  if (isInt(v)) return v;
+  if (isCelUint(v)) {
+    return inInt64Range(v.value) ? v.value : undefined;
+  }
+  if (isDouble(v)) {
+    if (!Number.isFinite(v)) return undefined;
+    const r = BigInt(Math.trunc(v));
+    return inInt64Range(r) ? r : undefined;
+  }
+  if (isBool(v)) return v ? 1n : 0n;
+  if (isStr(v)) {
+    try {
+      const r = BigInt(v);
+      return inInt64Range(r) ? r : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  // timestamp (Date) -> seconds since epoch
+  if (v instanceof Date) {
+    const ms = v.getTime();
+    if (Number.isNaN(ms)) return undefined;
+    return BigInt(Math.trunc(ms / 1000));
+  }
+  return undefined;
+}
+
+export function celToUint(v: unknown): CelUint | undefined {
+  if (isCelUint(v)) return v;
+  if (isInt(v)) {
+    return inUint64Range(v) ? new CelUint(v) : undefined;
+  }
+  if (isDouble(v)) {
+    if (!Number.isFinite(v) || v < 0) return undefined;
+    const r = BigInt(Math.trunc(v));
+    return inUint64Range(r) ? new CelUint(r) : undefined;
+  }
+  if (isBool(v)) return new CelUint(v ? 1n : 0n);
+  if (isStr(v)) {
+    try {
+      const r = BigInt(v);
+      return inUint64Range(r) ? new CelUint(r) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+export function celToDouble(v: unknown): number | undefined {
+  if (isDouble(v)) return v;
+  if (isInt(v)) return Number(v);
+  if (isCelUint(v)) return Number(v.value);
+  if (isStr(v)) {
+    const n = Number(v);
+    return Number.isNaN(n) && v !== "NaN" ? undefined : n;
+  }
+  return undefined;
+}
+
+export function celToString(v: unknown): string | undefined {
+  if (isStr(v)) return v;
+  if (isInt(v)) return v.toString();
+  if (isCelUint(v)) return v.value.toString();
+  if (isDouble(v)) return String(v);
+  if (isBool(v)) return v ? "true" : "false";
+  if (v === null) return "null";
+  if (isBytes(v)) {
+    // Decode bytes as UTF-8
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(v);
+    } catch {
+      return undefined;
+    }
+  }
+  if (isList(v)) {
+    const parts: string[] = [];
+    for (const item of v) {
+      const s = celToString(item);
+      if (s === undefined) return undefined;
+      parts.push(s);
+    }
+    return `[${parts.join(", ")}]`;
+  }
+  if (isMap(v)) {
+    const parts: string[] = [];
+    for (const [k, val] of v) {
+      const ks = celToString(k);
+      const vs = celToString(val);
+      if (ks === undefined || vs === undefined) return undefined;
+      parts.push(`${ks}:${vs}`);
+    }
+    return `{${parts.join(", ")}}`;
+  }
+  if (isCelType(v)) return v.name;
+  if (v instanceof Date) return v.toISOString();
+  return undefined;
+}
+
+export function celToBool(v: unknown): boolean | undefined {
+  if (isBool(v)) return v;
+  if (isStr(v)) {
+    if (v === "true") return true;
+    if (v === "false") return false;
+    return undefined;
+  }
+  if (isInt(v)) return v !== 0n;
+  return undefined;
+}
+
+export function celToBytes(v: unknown): Uint8Array | undefined {
+  if (isBytes(v)) return v;
+  if (isStr(v)) {
+    return new TextEncoder().encode(v);
+  }
+  return undefined;
+}
+
+export function celType(v: unknown): string {
+  if (v === null) return "null_type";
+  if (isBool(v)) return "bool";
+  if (isInt(v)) return "int";
+  if (isCelUint(v)) return "uint";
+  if (isDouble(v)) return "double";
+  if (isStr(v)) return "string";
+  if (isBytes(v)) return "bytes";
+  if (isList(v)) return "list";
+  if (isMap(v)) return "map";
+  if (isCelType(v)) return "type";
+  if (v instanceof Date) return "google.protobuf.Timestamp";
+  return "unknown";
+}
+
+export function celDyn(v: unknown): unknown {
+  return v;
+}
+
+// ── Macro Helpers ──────────────────────────────────────────────────────────
+
+export function celAll(
+  list: unknown,
+  predicate: (elem: CelValue, index: bigint) => unknown,
+): boolean | undefined {
+  if (!isList(list)) return undefined;
+  let hasError = false;
+  for (let i = 0; i < list.length; i++) {
+    const elem = list[i] as CelValue;
+    const result = predicate(elem, BigInt(i));
+    if (result === false) return false; // short-circuit: false wins over error
+    if (result !== true) hasError = true; // undefined (error)
+  }
+  return hasError ? undefined : true;
+}
+
+export function celExists(
+  list: unknown,
+  predicate: (elem: CelValue, index: bigint) => unknown,
+): boolean | undefined {
+  if (!isList(list)) return undefined;
+  let hasError = false;
+  for (let i = 0; i < list.length; i++) {
+    const elem = list[i] as CelValue;
+    const result = predicate(elem, BigInt(i));
+    if (result === true) return true; // short-circuit: true wins over error
+    if (result !== false) hasError = true; // undefined (error)
+  }
+  return hasError ? undefined : false;
+}
+
+export function celExistsOne(
+  list: unknown,
+  predicate: (elem: CelValue, index: bigint) => unknown,
+): boolean | undefined {
+  if (!isList(list)) return undefined;
+  let count = 0;
+  for (let i = 0; i < list.length; i++) {
+    const elem = list[i] as CelValue;
+    const result = predicate(elem, BigInt(i));
+    if (result === undefined) return undefined;
+    if (result === true) count++;
+  }
+  return count === 1;
+}
+
+export function celMap(
+  list: unknown,
+  transform: (elem: CelValue, index: bigint) => CelValue | undefined,
+): CelValue[] | undefined {
+  if (!isList(list)) return undefined;
+  const result: CelValue[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const elem = list[i] as CelValue;
+    const mapped = transform(elem, BigInt(i));
+    if (mapped === undefined) return undefined;
+    result.push(mapped);
+  }
+  return result;
+}
+
+export function celFilter(
+  list: unknown,
+  predicate: (elem: CelValue, index: bigint) => unknown,
+): CelValue[] | undefined {
+  if (!isList(list)) return undefined;
+  const result: CelValue[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const elem = list[i] as CelValue;
+    const keep = predicate(elem, BigInt(i));
+    if (keep === undefined) return undefined;
+    if (keep === true) result.push(elem);
+  }
+  return result;
+}
+
+// ── Logical Helpers ────────────────────────────────────────────────────────
+
+/**
+ * CEL conditional (ternary) with error handling.
+ * If condition is an error (undefined), propagates the error.
+ */
+export function celCond(
+  condition: unknown,
+  trueVal: () => unknown,
+  falseVal: () => unknown,
+): unknown {
+  if (condition === undefined) return undefined;
+  return condition ? trueVal() : falseVal();
+}
+
+/**
+ * CEL logical NOT. Returns !bool or undefined for non-bool.
+ */
+export function celNot(v: unknown): boolean | undefined {
+  if (isBool(v)) return !v;
+  return undefined;
+}
+
+/**
+ * CEL logical OR with error absorption.
+ * true || error = true
+ * error || true = true
+ * false || error = error
+ * error || false = error
+ * error || error = error
+ */
+export function celOr(a: unknown, b: () => unknown): boolean | undefined {
+  if (a === true) return true;
+  const bv = b();
+  if (bv === true) return true;
+  if (a === false && bv === false) return false;
+  return undefined;
+}
+
+/**
+ * CEL logical AND with error absorption.
+ * false && error = false
+ * error && false = false
+ * true && error = error
+ * error && true = error
+ * error && error = error
+ */
+export function celAnd(a: unknown, b: () => unknown): boolean | undefined {
+  if (a === false) return false;
+  const bv = b();
+  if (bv === false) return false;
+  if (a === true && bv === true) return true;
+  return undefined;
+}
+
+// ── createRuntime ──────────────────────────────────────────────────────────
+
+/** Create the _rt object that generated code references */
+export function createRuntime() {
+  return {
+    // Arithmetic
+    add: celAdd,
+    sub: celSub,
+    mul: celMul,
+    div: celDiv,
+    mod: celMod,
+    neg: celNeg,
+    // Comparison
+    eq: celEq,
+    ne: celNe,
+    lt: celLt,
+    le: celLe,
+    gt: celGt,
+    ge: celGe,
+    // Collections
+    in: celIn,
+    size: celSize,
+    index: celIndex,
+    // Strings
+    contains: celContains,
+    startsWith: celStartsWith,
+    endsWith: celEndsWith,
+    matches: celMatches,
+    // Type conversions
+    toInt: celToInt,
+    toUint: celToUint,
+    toDouble: celToDouble,
+    toString: celToString,
+    toBool: celToBool,
+    toBytes: celToBytes,
+    type: celType,
+    dyn: celDyn,
+    // Macros
+    all: celAll,
+    exists: celExists,
+    existsOne: celExistsOne,
+    map: celMap,
+    filter: celFilter,
+    // Logical
+    cond: celCond,
+    not: celNot,
+    or: celOr,
+    and: celAnd,
+    // Types
+    CelUint,
+    celUint: (n: bigint) => new CelUint(n),
+    isCelUint,
+    CelType,
+    isCelType,
+  };
+}
