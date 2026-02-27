@@ -61,39 +61,6 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
   const container = options?.container;
   const baseRuntime = createRuntime(container ? { container } : undefined);
 
-  // Wrap runtime with a Proxy: unknown method calls return a function
-  // that returns undefined (our error sentinel) instead of throwing TypeError.
-  const runtime = new Proxy(baseRuntime, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if (value !== undefined) return value;
-      // Unknown property: check if it's an enum constructor pattern
-      if (typeof prop === "string") {
-        return (...args: unknown[]) => {
-          // Pattern: _rt.EnumName(receiver, arg) where receiver.EnumName is an enum def
-          if (args.length === 2) {
-            const maybeReceiver = args[0];
-            if (maybeReceiver && typeof maybeReceiver === "object" && prop in maybeReceiver) {
-              const enumDef = (maybeReceiver as Record<string, unknown>)[prop];
-              return baseRuntime.enumConstruct(enumDef, args[1]);
-            }
-          }
-          // Pattern: _rt.GlobalEnum(arg) where GlobalEnum is a known enum in bindings
-          if (args.length === 1) {
-            const qualifiedName = container ? `${container}.${prop}` : prop;
-            const enumDef =
-              defaultQualifiedBindings[qualifiedName] ?? defaultQualifiedBindings[prop];
-            if (enumDef && typeof enumDef === "object" && !(enumDef instanceof CelType)) {
-              return baseRuntime.enumConstruct(enumDef, args[0]);
-            }
-          }
-          return undefined;
-        };
-      }
-      return undefined;
-    },
-  });
-
   // Proto enum constant definitions (for conformance test compatibility)
   const nestedEnum = { FOO: 0n, BAR: 1n, BAZ: 2n };
   const globalEnum = { GOO: 0n, GAR: 1n, GAZ: 2n };
@@ -141,6 +108,30 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
     // Network extension type constants
     "net.IP": new CelType("net.IP"),
     "net.CIDR": new CelType("net.CIDR"),
+  };
+
+  // Add dispatch handler for unknown function calls (enum construction, etc.).
+  // Replaces the Proxy wrapper — only unknown calls go through this method,
+  // while all ~120 known runtime methods are accessed directly on the plain object.
+  const runtime = baseRuntime as Record<string, unknown>;
+  runtime.__dispatch = (name: string, args: unknown[]): unknown => {
+    // Pattern: EnumName(receiver, arg) where receiver.EnumName is an enum def
+    if (args.length === 2) {
+      const maybeReceiver = args[0];
+      if (maybeReceiver && typeof maybeReceiver === "object" && name in maybeReceiver) {
+        const enumDef = (maybeReceiver as Record<string, unknown>)[name];
+        return baseRuntime.enumConstruct(enumDef, args[1]);
+      }
+    }
+    // Pattern: GlobalEnum(arg) where GlobalEnum is a known enum in bindings
+    if (args.length === 1) {
+      const qualifiedName = container ? `${container}.${name}` : name;
+      const enumDef = defaultQualifiedBindings[qualifiedName] ?? defaultQualifiedBindings[name];
+      if (enumDef && typeof enumDef === "object" && !(enumDef instanceof CelType)) {
+        return baseRuntime.enumConstruct(enumDef, args[0]);
+      }
+    }
+    return undefined;
   };
 
   const evaluate = (bindings?: Record<string, unknown>): unknown => {

@@ -340,6 +340,10 @@ const GLOBAL_FUNC_TO_RT: Record<string, string> = {
   duration: "duration",
   timestamp: "timestamp",
   dyn: "dyn",
+  // Network extension globals
+  ip: "ip",
+  cidr: "cidr",
+  isIP: "isIP",
 };
 
 /** Known extension namespaces — calls like math.fn() route to _rt["math.fn"]() */
@@ -375,6 +379,42 @@ const MEMBER_FUNC_TO_RT: Record<string, string> = {
   exists_one: "existsOne",
   filter: "filter",
   map: "map",
+  // String extensions
+  charAt: "charAt",
+  indexOf: "indexOf",
+  lastIndexOf: "lastIndexOf",
+  lowerAscii: "lowerAscii",
+  upperAscii: "upperAscii",
+  replace: "replace",
+  split: "split",
+  substring: "substring",
+  trim: "trim",
+  join: "join",
+  quote: "quote",
+  format: "format",
+  // Timestamp/Duration accessors
+  getFullYear: "getFullYear",
+  getMonth: "getMonth",
+  getDate: "getDate",
+  getDayOfMonth: "getDayOfMonth",
+  getDayOfWeek: "getDayOfWeek",
+  getDayOfYear: "getDayOfYear",
+  getHours: "getHours",
+  getMinutes: "getMinutes",
+  getSeconds: "getSeconds",
+  getMilliseconds: "getMilliseconds",
+  // Network extension
+  ip: "ip",
+  family: "family",
+  isUnspecified: "isUnspecified",
+  isLoopback: "isLoopback",
+  isGlobalUnicast: "isGlobalUnicast",
+  isLinkLocalMulticast: "isLinkLocalMulticast",
+  isLinkLocalUnicast: "isLinkLocalUnicast",
+  containsIP: "containsIP",
+  containsCIDR: "containsCIDR",
+  masked: "masked",
+  prefixLength: "prefixLength",
 };
 
 function transformExpr(node: CelExpr, temps: TempAllocator, bindings: Set<string>): Expression {
@@ -728,8 +768,8 @@ function transformCall(
     if (memberMethod !== undefined) {
       return rtCall(memberMethod, [receiver, ...transformedArgs]);
     }
-    // Unknown member method: still route through runtime
-    return rtCall(fn, [receiver, ...transformedArgs]);
+    // Unknown member method: route through __dispatch for enum construction
+    return rtCall("__dispatch", [literal(fn), arrayExpr([receiver, ...transformedArgs])]);
   }
 
   // -- Global function call: f(args) -> _rt.f(args) --------------------
@@ -739,8 +779,8 @@ function transformCall(
     return rtCall(globalMethod, transformedArgs);
   }
 
-  // Fallback: call through runtime with original function name
-  return rtCall(fn, transformedArgs);
+  // Fallback: route through __dispatch for enum construction
+  return rtCall("__dispatch", [literal(fn), arrayExpr(transformedArgs)]);
 }
 
 // ---------------------------------------------------------------------------
