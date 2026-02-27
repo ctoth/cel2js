@@ -49,8 +49,8 @@
     };
   }
 
-  function boolMacro(iterRange, iterVar, init, loopStep, loopCondition) {
-    return {
+  function boolMacro(iterRange, iterVar, init, loopStep, loopCondition, iterVar2) {
+    const node = {
       kind: "Comprehension",
       iterVar,
       iterRange,
@@ -60,10 +60,12 @@
       loopStep,
       result: ident(ACCU),
     };
+    if (iterVar2 !== undefined) node.iterVar2 = iterVar2;
+    return node;
   }
 
-  function listMacro(iterRange, iterVar, loopStep) {
-    return {
+  function listMacro(iterRange, iterVar, loopStep, iterVar2) {
+    const node = {
       kind: "Comprehension",
       iterVar,
       iterRange,
@@ -73,6 +75,8 @@
       loopStep,
       result: ident(ACCU),
     };
+    if (iterVar2 !== undefined) node.iterVar2 = iterVar2;
+    return node;
   }
 
   function expandExists(target, x, test) {
@@ -120,8 +124,8 @@
     );
   }
 
-  function expandExistsOne(target, x, step) {
-    return {
+  function expandExistsOne(target, x, step, x2) {
+    const node = {
       kind: "Comprehension",
       iterVar: x,
       iterRange: target,
@@ -135,6 +139,86 @@
       ]),
       result: call("_==_", [ident(ACCU), intLit(1n)]),
     };
+    if (x2 !== undefined) node.iterVar2 = x2;
+    return node;
+  }
+
+  /* Two-variable exists: exists(i, v, pred) */
+  function expandExists2(target, i, v, test) {
+    return boolMacro(
+      target, i, false,
+      call("_||_", [ident(ACCU), test]),
+      call("@not_strictly_false", [call("!_", [ident(ACCU)])]),
+      v,
+    );
+  }
+
+  /* Two-variable all: all(i, v, pred) */
+  function expandAll2(target, i, v, test) {
+    return boolMacro(
+      target, i, true,
+      call("_&&_", [ident(ACCU), test]),
+      call("@not_strictly_false", [ident(ACCU)]),
+      v,
+    );
+  }
+
+  /* transformList(i, v, expr) — maps list values using index + value */
+  function expandTransformList(target, i, v, step) {
+    return listMacro(
+      target, i,
+      call("_+_", [ident(ACCU), listExpr([step])]),
+      v,
+    );
+  }
+
+  /* transformList(i, v, pred, expr) — filter+map with two variables */
+  function expandTransformListFilter(target, i, v, test, step) {
+    return listMacro(
+      target, i,
+      call("_?_:_", [
+        test,
+        call("_+_", [ident(ACCU), listExpr([step])]),
+        ident(ACCU),
+      ]),
+      v,
+    );
+  }
+
+  /* transformMap(k, v, expr) — transform map values */
+  function expandTransformMap(target, k, v, step) {
+    const node = {
+      kind: "Comprehension",
+      iterVar: k,
+      iterVar2: v,
+      iterRange: target,
+      accuVar: ACCU,
+      accuInit: { kind: "CreateMap", entries: [] },
+      loopCondition: boolLit(true),
+      loopStep: call("@mapInsert", [ident(ACCU), ident(k), step]),
+      result: ident(ACCU),
+    };
+    return node;
+  }
+
+  /* transformMap(k, v, pred, expr) — filter+transform map values */
+  function expandTransformMapFilter(target, k, v, test, step) {
+    const node = {
+      kind: "Comprehension",
+      iterVar: k,
+      iterVar2: v,
+      iterRange: target,
+      accuVar: ACCU,
+      accuInit: { kind: "CreateMap", entries: [] },
+      loopCondition: boolLit(true),
+      loopStep: call("_?_:_", [
+        test,
+        call("@mapInsert", [ident(ACCU), ident(k), step]),
+        ident(ACCU),
+      ]),
+      result: ident(ACCU),
+    };
+    return node;
   }
 
   function maybeExpand(target, funcName, args) {
@@ -145,6 +229,7 @@
       args[0].kind === "Ident"
     ) {
       const varName = args[0].name;
+      // Two-arg macros: target.func(var, expr)
       if (args.length === 2) {
         switch (funcName) {
           case "exists":     return expandExists(target, varName, args[1]);
@@ -155,8 +240,36 @@
           case "existsOne":  return expandExistsOne(target, varName, args[1]);
         }
       }
+      // Three-arg macros: target.func(var1, var2, expr) or target.map(var, pred, expr)
+      if (
+        args.length === 3 &&
+        args[1] !== undefined &&
+        args[1].kind === "Ident"
+      ) {
+        const var2Name = args[1].name;
+        switch (funcName) {
+          case "exists":     return expandExists2(target, varName, var2Name, args[2]);
+          case "all":        return expandAll2(target, varName, var2Name, args[2]);
+          case "exists_one":
+          case "existsOne":  return expandExistsOne(target, varName, args[2], var2Name);
+          case "transformList": return expandTransformList(target, varName, var2Name, args[2]);
+          case "transformMap":  return expandTransformMap(target, varName, var2Name, args[2]);
+        }
+      }
       if (args.length === 3 && funcName === "map") {
         return expandMapFilter(target, varName, args[1], args[2]);
+      }
+      // Four-arg macros: target.func(var1, var2, pred, expr)
+      if (
+        args.length === 4 &&
+        args[1] !== undefined &&
+        args[1].kind === "Ident"
+      ) {
+        const var2Name = args[1].name;
+        switch (funcName) {
+          case "transformList": return expandTransformListFilter(target, varName, var2Name, args[2], args[3]);
+          case "transformMap":  return expandTransformMapFilter(target, varName, var2Name, args[2], args[3]);
+        }
       }
     }
     return call(funcName, args, target);

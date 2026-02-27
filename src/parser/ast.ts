@@ -89,6 +89,8 @@ export interface CreateStruct {
 export interface Comprehension {
   readonly kind: "Comprehension";
   readonly iterVar: string;
+  /** Second iteration variable for two-variable macros (index/key for lists, value for maps) */
+  readonly iterVar2?: string | undefined;
   readonly iterRange: CelExpr;
   readonly accuVar: string;
   readonly accuInit: CelExpr;

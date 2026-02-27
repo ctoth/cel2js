@@ -42,8 +42,8 @@ export const SKIP_PATHS: string[][] = [
   ["timestamps"],
 
   // Macros
-  ["macros"],
-  ["macros2"],
+  // ["macros"],  -- enabled: macro operations
+  // ["macros2"],  -- enabled: macro operations (v2)
 
   // Proto integration
   ["proto2"],

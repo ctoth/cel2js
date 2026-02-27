@@ -247,7 +247,9 @@ function transformExpr(node: CelExpr, temps: TempAllocator, bindings: Set<string
     // -- CreateList -----------------------------------------------------
 
     case "CreateList":
-      return arrayExpr(node.elements.map((e) => transformExpr(e, temps, bindings)));
+      return rtCall("makeList", [
+        arrayExpr(node.elements.map((e) => transformExpr(e, temps, bindings))),
+      ]);
 
     // -- CreateMap ------------------------------------------------------
 
@@ -312,6 +314,21 @@ function transformCall(
       literal(true),
       conditional(binaryExpr("===", arg, literal(true)), literal(false), UNDEF),
     );
+  }
+
+  // -- @not_strictly_false (used in comprehension loop conditions) -------
+  if (fn === "@not_strictly_false" && args.length === 1) {
+    const arg = transformExpr(at(args, 0), temps, bindings);
+    // @not_strictly_false(x) = x !== false
+    return binaryExpr("!==", arg, literal(false));
+  }
+
+  // -- @mapInsert (used in transformMap comprehension step) ---------------
+  if (fn === "@mapInsert" && args.length === 3) {
+    const map = transformExpr(at(args, 0), temps, bindings);
+    const key = transformExpr(at(args, 1), temps, bindings);
+    const value = transformExpr(at(args, 2), temps, bindings);
+    return rtCall("mapInsert", [map, key, value]);
   }
 
   // -- Ternary ----------------------------------------------------------
@@ -480,22 +497,36 @@ function transformComprehension(
   const innerBindings = new Set(bindings);
   innerBindings.add(node.iterVar);
   innerBindings.add(node.accuVar);
+  if (node.iterVar2 !== undefined) {
+    innerBindings.add(node.iterVar2);
+  }
 
   const loopCondition = transformExpr(node.loopCondition, temps, innerBindings);
   const loopStep = transformExpr(node.loopStep, temps, innerBindings);
   const result = transformExpr(node.result, temps, innerBindings);
 
-  return rtCall("comprehension", [
+  // Build lambda parameters: (iterVar [, iterVar2], accuVar)
+  const condParams =
+    node.iterVar2 !== undefined
+      ? [identifier(node.iterVar), identifier(node.iterVar2), identifier(node.accuVar)]
+      : [identifier(node.iterVar), identifier(node.accuVar)];
+  const stepParams = [...condParams]; // same params for step
+  const resultParams = [identifier(node.accuVar)];
+
+  const args: Expression[] = [
     iterRange,
     accuInit,
     literal(node.iterVar),
     literal(node.accuVar),
-    arrowFn(
-      [identifier(node.iterVar), identifier(node.accuVar)],
-      loopCondition,
-      true, // expression body
-    ),
-    arrowFn([identifier(node.iterVar), identifier(node.accuVar)], loopStep, true),
-    arrowFn([identifier(node.accuVar)], result, true),
-  ]);
+    arrowFn(condParams, loopCondition, true),
+    arrowFn(stepParams, loopStep, true),
+    arrowFn(resultParams, result, true),
+  ];
+
+  // Pass iterVar2 name if present (two-variable comprehension)
+  if (node.iterVar2 !== undefined) {
+    args.push(literal(node.iterVar2));
+  }
+
+  return rtCall("comprehension", args);
 }

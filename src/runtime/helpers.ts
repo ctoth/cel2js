@@ -787,7 +787,15 @@ export function celFilter(
   return result;
 }
 
-// ── Map / Struct / Comprehension Helpers ──────────────────────────────
+// ── List / Map / Struct / Comprehension Helpers ───────────────────────
+
+/** Create a CEL list, propagating errors. Returns undefined if any element is undefined. */
+export function celMakeList(elements: CelValue[]): CelValue[] | undefined {
+  for (const e of elements) {
+    if (e === undefined) return undefined;
+  }
+  return elements;
+}
 
 /** Create a CEL map from an array of [key, value] pairs */
 export function celMakeMap(entries: [CelValue, CelValue][]): Map<CelValue, CelValue> {
@@ -796,6 +804,20 @@ export function celMakeMap(entries: [CelValue, CelValue][]): Map<CelValue, CelVa
     m.set(k, v);
   }
   return m;
+}
+
+/** Insert a key-value pair into a map, returning a new map (used by transformMap comprehension).
+ *  Returns undefined if the value is undefined (error propagation). */
+export function celMapInsert(
+  map: unknown,
+  key: unknown,
+  value: unknown,
+): Map<CelValue, CelValue> | undefined {
+  if (value === undefined) return undefined;
+  if (!(map instanceof Map)) return undefined;
+  const result = new Map<CelValue, CelValue>(map as Map<CelValue, CelValue>);
+  result.set(key as CelValue, value as CelValue);
+  return result;
 }
 
 /** Default values for protobuf wrapper types when constructed with no value field */
@@ -872,24 +894,33 @@ export function celComprehension(
   init: unknown,
   _iterVar: string,
   _accuVar: string,
-  condFn: (iter: CelValue, accu: unknown) => unknown,
-  stepFn: (iter: CelValue, accu: unknown) => unknown,
+  condFn: (...args: unknown[]) => unknown,
+  stepFn: (...args: unknown[]) => unknown,
   resultFn: (accu: unknown) => unknown,
+  _iterVar2?: string,
 ): unknown {
+  const twoVar = _iterVar2 !== undefined;
   let accu = init;
   if (Array.isArray(range)) {
-    for (const elem of range) {
-      const cond = condFn(elem as CelValue, accu);
+    for (let idx = 0; idx < range.length; idx++) {
+      const elem = range[idx] as CelValue;
+      // For two-variable: (index, value, accu); one-variable: (elem, accu)
+      const cond = twoVar ? condFn(BigInt(idx), elem, accu) : condFn(elem, accu);
       if (cond === false) break;
       if (cond !== true) return undefined; // error in condition
-      accu = stepFn(elem as CelValue, accu);
+      accu = twoVar ? stepFn(BigInt(idx), elem, accu) : stepFn(elem, accu);
     }
   } else if (range instanceof Map) {
-    for (const [key] of range) {
-      const cond = condFn(key as CelValue, accu);
+    for (const [key, value] of range) {
+      // For two-variable: (key, value, accu); one-variable: (key, accu)
+      const cond = twoVar
+        ? condFn(key as CelValue, value as CelValue, accu)
+        : condFn(key as CelValue, accu);
       if (cond === false) break;
       if (cond !== true) return undefined;
-      accu = stepFn(key as CelValue, accu);
+      accu = twoVar
+        ? stepFn(key as CelValue, value as CelValue, accu)
+        : stepFn(key as CelValue, accu);
     }
   } else {
     return undefined; // range is not iterable
@@ -1033,8 +1064,10 @@ export function createRuntime() {
     and: celAnd,
     orN: celOrN,
     andN: celAndN,
-    // Map / Struct / Comprehension
+    // List / Map / Struct / Comprehension
+    makeList: celMakeList,
     makeMap: celMakeMap,
+    mapInsert: celMapInsert,
     makeStruct: celMakeStruct,
     has: celHas,
     comprehension: celComprehension,
