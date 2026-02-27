@@ -356,6 +356,8 @@ function numericCompare(a: bigint | CelUint | number, b: bigint | CelUint | numb
 }
 
 export function celLt(a: unknown, b: unknown): boolean | undefined {
+  // Fast path: int vs int (bigint vs bigint) — most common case
+  if (typeof a === "bigint" && typeof b === "bigint") return a < b;
   if (isNumeric(a) && isNumeric(b)) {
     const c = numericCompare(a as bigint | CelUint | number, b as bigint | CelUint | number);
     return Number.isNaN(c) ? false : c < 0;
@@ -369,6 +371,8 @@ export function celLt(a: unknown, b: unknown): boolean | undefined {
 }
 
 export function celLe(a: unknown, b: unknown): boolean | undefined {
+  // Fast path: int vs int (bigint vs bigint) — most common case
+  if (typeof a === "bigint" && typeof b === "bigint") return a <= b;
   if (isNumeric(a) && isNumeric(b)) {
     const c = numericCompare(a as bigint | CelUint | number, b as bigint | CelUint | number);
     return Number.isNaN(c) ? false : c <= 0;
@@ -382,6 +386,8 @@ export function celLe(a: unknown, b: unknown): boolean | undefined {
 }
 
 export function celGt(a: unknown, b: unknown): boolean | undefined {
+  // Fast path: int vs int (bigint vs bigint) — most common case
+  if (typeof a === "bigint" && typeof b === "bigint") return a > b;
   if (isNumeric(a) && isNumeric(b)) {
     const c = numericCompare(a as bigint | CelUint | number, b as bigint | CelUint | number);
     return Number.isNaN(c) ? false : c > 0;
@@ -395,6 +401,8 @@ export function celGt(a: unknown, b: unknown): boolean | undefined {
 }
 
 export function celGe(a: unknown, b: unknown): boolean | undefined {
+  // Fast path: int vs int (bigint vs bigint) — most common case
+  if (typeof a === "bigint" && typeof b === "bigint") return a >= b;
   if (isNumeric(a) && isNumeric(b)) {
     const c = numericCompare(a as bigint | CelUint | number, b as bigint | CelUint | number);
     return Number.isNaN(c) ? false : c >= 0;
@@ -583,6 +591,24 @@ export function celSelect(obj: unknown, field: string): CelValue | undefined {
   if (obj === null || obj === undefined) return undefined;
   // Fast path: typeof check first to handle the most common case (plain object) quickly
   if (typeof obj === "object") {
+    // Prototype-based plain-object fast path: skip Map, CelOptional, Array, etc. checks
+    const proto = Object.getPrototypeOf(obj);
+    if (proto === Object.prototype || proto === null) {
+      const record = obj as Record<string, CelValue>;
+      // Plain objects with __type are proto/struct messages — need extension handling
+      if ("__type" in obj) {
+        if (field.includes(".")) {
+          const extensions = (obj as Record<symbol, unknown>)[PROTO_EXTENSIONS] as
+            | Map<string, CelValue>
+            | undefined;
+          if (extensions?.has(field)) return extensions.get(field) as CelValue;
+          return undefined;
+        }
+        return record[field];
+      }
+      // Pure plain object (e.g. {auth: {...}}) — direct field access
+      return record[field];
+    }
     // Map: CEL map.field is equivalent to map["field"]
     if (obj instanceof Map) {
       return mapGet(obj, field) as CelValue | undefined;
@@ -614,7 +640,7 @@ export function celSelect(obj: unknown, field: string): CelValue | undefined {
     if (Array.isArray(obj) || obj instanceof Uint8Array) return undefined;
     if (isCelUint(obj) || isCelType(obj)) return undefined;
     if (isCelTimestamp(obj) || isCelDuration(obj)) return undefined;
-    // Plain object — the common path
+    // Plain object — the common path (fallback for objects with non-standard prototypes)
     if (isStruct(obj) && field.includes(".")) {
       const extensions = (obj as Record<symbol, unknown>)[PROTO_EXTENSIONS] as
         | Map<string, CelValue>
