@@ -14,5 +14,32 @@ function shouldSkip(path: string[]): boolean {
   return SKIP_PATHS.some((skip) => pathStr.startsWith(`${skip.join("/")}/`));
 }
 
-const suite = getConformanceSuite();
-runTestSuite(suite, runSimpleTest, [], shouldSkip);
+/**
+ * Parse the SUITE environment variable into a set of suite names.
+ * Supports comma-separated values: SUITE=logic,comparisons
+ * Returns undefined if SUITE is not set (run all suites).
+ */
+function getSuiteFilter(): Set<string> | undefined {
+  const raw = process.env.SUITE;
+  if (!raw) return undefined;
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
+const suiteFilter = getSuiteFilter();
+const fullSuite = getConformanceSuite();
+
+if (suiteFilter) {
+  // Filter: only run conformance suites whose name matches the filter
+  const filtered = {
+    ...fullSuite,
+    suites: fullSuite.suites.filter((s) => suiteFilter.has(s.name)),
+  };
+  runTestSuite(filtered, runSimpleTest, [], shouldSkip);
+} else {
+  runTestSuite(fullSuite, runSimpleTest, [], shouldSkip);
+}
