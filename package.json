@@ -11,14 +11,19 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bench": "vitest bench",
+    "bench:run": "vitest bench --run"
   },
   "dependencies": {
     "astring": "^1.9.0"
   },
   "devDependencies": {
+    "@bufbuild/cel": "^0.4.0",
     "@bufbuild/cel-spec": "^0.4.0",
     "@bufbuild/protobuf": "^2.6.2",
+    "@marcbachmann/cel-js": "^7.5.1",
+    "cel-js": "^0.8.2",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },
