@@ -7,6 +7,10 @@ const INT64_MIN = -(2n ** 63n);
 const INT64_MAX = 2n ** 63n - 1n;
 const UINT64_MAX = 2n ** 64n - 1n;
 
+// CEL timestamp valid range: 0001-01-01T00:00:00Z to 9999-12-31T23:59:59.999999999Z
+const TIMESTAMP_MIN_SEC = -62135596800n; // 0001-01-01T00:00:00Z in seconds since epoch
+const TIMESTAMP_MAX_SEC = 253402300799n; // 9999-12-31T23:59:59Z in seconds since epoch
+
 // ── Internal helpers ───────────────────────────────────────────────────────
 
 /** Check if a bigint is within int64 range */
@@ -62,7 +66,7 @@ function isStruct(v: unknown): v is Record<string, CelValue> & { __type: string 
     !Array.isArray(v) &&
     !(v instanceof Map) &&
     !(v instanceof Uint8Array) &&
-    !(v instanceof Date) &&
+    !isCelTimestamp(v) &&
     "__type" in v &&
     typeof (v as Record<string, unknown>).__type === "string"
   );
@@ -82,7 +86,7 @@ function toNumber(v: bigint | CelUint | number): number {
 
 // ── Arithmetic Helpers ─────────────────────────────────────────────────────
 
-export function celAdd(a: unknown, b: unknown): CelValue | undefined {
+export function celAdd(a: unknown, b: unknown): CelValue | CelTimestamp | CelDuration | undefined {
   // int + int
   if (isInt(a) && isInt(b)) {
     const r = a + b;
@@ -106,10 +110,23 @@ export function celAdd(a: unknown, b: unknown): CelValue | undefined {
     r.set(b, a.length);
     return r;
   }
+  // timestamp + duration
+  if (isCelTimestamp(a) && isCelDuration(b)) {
+    return addDurationToTimestamp(a, b);
+  }
+  // duration + timestamp
+  if (isCelDuration(a) && isCelTimestamp(b)) {
+    return addDurationToTimestamp(b, a);
+  }
+  // duration + duration
+  if (isCelDuration(a) && isCelDuration(b)) {
+    const totalNanos = durationToNanos(a) + durationToNanos(b);
+    return nanosToValidDuration(totalNanos);
+  }
   return undefined;
 }
 
-export function celSub(a: unknown, b: unknown): CelValue | undefined {
+export function celSub(a: unknown, b: unknown): CelValue | CelTimestamp | CelDuration | undefined {
   if (isInt(a) && isInt(b)) {
     const r = a - b;
     return inInt64Range(r) ? r : undefined;
@@ -119,6 +136,21 @@ export function celSub(a: unknown, b: unknown): CelValue | undefined {
     return inUint64Range(r) ? new CelUint(r) : undefined;
   }
   if (isDouble(a) && isDouble(b)) return a - b;
+  // timestamp - duration
+  if (isCelTimestamp(a) && isCelDuration(b)) {
+    const negDur = nanosToValidDuration(-durationToNanos(b));
+    if (negDur === undefined) return undefined;
+    return addDurationToTimestamp(a, negDur);
+  }
+  // timestamp - timestamp = duration
+  if (isCelTimestamp(a) && isCelTimestamp(b)) {
+    return subtractTimestamps(a, b);
+  }
+  // duration - duration
+  if (isCelDuration(a) && isCelDuration(b)) {
+    const totalNanos = durationToNanos(a) - durationToNanos(b);
+    return nanosToValidDuration(totalNanos);
+  }
   return undefined;
 }
 
@@ -250,9 +282,9 @@ export function celEq(a: unknown, b: unknown): boolean | undefined {
     return true;
   }
 
-  // Date (timestamp) equality
-  if (a instanceof Date && b instanceof Date) {
-    return a.getTime() === b.getTime();
+  // CelTimestamp equality
+  if (isCelTimestamp(a) && isCelTimestamp(b)) {
+    return a.seconds === b.seconds && a.nanos === b.nanos;
   }
 
   // CelDuration equality
@@ -295,6 +327,8 @@ export function celLt(a: unknown, b: unknown): boolean | undefined {
   if (isStr(a) && isStr(b)) return a < b;
   if (isBool(a) && isBool(b)) return !a && b; // false < true
   if (isBytes(a) && isBytes(b)) return bytesCompare(a, b) < 0;
+  if (isCelTimestamp(a) && isCelTimestamp(b)) return timestampCompare(a, b) < 0;
+  if (isCelDuration(a) && isCelDuration(b)) return durationCompare(a, b) < 0;
   return undefined;
 }
 
@@ -306,6 +340,8 @@ export function celLe(a: unknown, b: unknown): boolean | undefined {
   if (isStr(a) && isStr(b)) return a <= b;
   if (isBool(a) && isBool(b)) return !a || b; // false <= true, false <= false, true <= true
   if (isBytes(a) && isBytes(b)) return bytesCompare(a, b) <= 0;
+  if (isCelTimestamp(a) && isCelTimestamp(b)) return timestampCompare(a, b) <= 0;
+  if (isCelDuration(a) && isCelDuration(b)) return durationCompare(a, b) <= 0;
   return undefined;
 }
 
@@ -317,6 +353,8 @@ export function celGt(a: unknown, b: unknown): boolean | undefined {
   if (isStr(a) && isStr(b)) return a > b;
   if (isBool(a) && isBool(b)) return a && !b;
   if (isBytes(a) && isBytes(b)) return bytesCompare(a, b) > 0;
+  if (isCelTimestamp(a) && isCelTimestamp(b)) return timestampCompare(a, b) > 0;
+  if (isCelDuration(a) && isCelDuration(b)) return durationCompare(a, b) > 0;
   return undefined;
 }
 
@@ -328,7 +366,73 @@ export function celGe(a: unknown, b: unknown): boolean | undefined {
   if (isStr(a) && isStr(b)) return a >= b;
   if (isBool(a) && isBool(b)) return a || !b;
   if (isBytes(a) && isBytes(b)) return bytesCompare(a, b) >= 0;
+  if (isCelTimestamp(a) && isCelTimestamp(b)) return timestampCompare(a, b) >= 0;
+  if (isCelDuration(a) && isCelDuration(b)) return durationCompare(a, b) >= 0;
   return undefined;
+}
+
+/** Compare two CelTimestamp values. Returns -1, 0, or 1. */
+function timestampCompare(a: CelTimestamp, b: CelTimestamp): number {
+  if (a.seconds !== b.seconds) return a.seconds < b.seconds ? -1 : 1;
+  if (a.nanos !== b.nanos) return a.nanos < b.nanos ? -1 : 1;
+  return 0;
+}
+
+/** Compare two CelDuration values. Returns -1, 0, or 1. */
+function durationCompare(a: CelDuration, b: CelDuration): number {
+  if (a.seconds !== b.seconds) return a.seconds < b.seconds ? -1 : 1;
+  if (a.nanos !== b.nanos) return a.nanos < b.nanos ? -1 : 1;
+  return 0;
+}
+
+/** Convert a CelDuration to total nanoseconds as bigint */
+function durationToNanos(d: CelDuration): bigint {
+  return d.seconds * 1000000000n + BigInt(d.nanos);
+}
+
+/** Create a CelDuration from total nanoseconds, with range validation */
+function nanosToValidDuration(totalNanos: bigint): CelDuration | undefined {
+  // Duration must fit in int64 nanoseconds (per CEL spec / cel-es reference)
+  if (totalNanos > INT64_MAX || totalNanos < INT64_MIN) return undefined;
+  // Note: integer division truncates toward zero in bigint
+  let secs = totalNanos / 1000000000n;
+  let nanos = Number(totalNanos % 1000000000n);
+  // Normalize: nanos should have same sign as seconds
+  if (nanos < 0 && secs > 0n) {
+    secs -= 1n;
+    nanos += 1000000000;
+  } else if (nanos > 0 && secs < 0n) {
+    secs += 1n;
+    nanos -= 1000000000;
+  }
+  return new CelDuration(secs, nanos);
+}
+
+/** Add a duration to a timestamp, returning a new CelTimestamp or undefined if out of range */
+function addDurationToTimestamp(ts: CelTimestamp, dur: CelDuration): CelTimestamp | undefined {
+  let resultSec = ts.seconds + dur.seconds;
+  let resultNanos = ts.nanos + dur.nanos;
+
+  // Normalize nanos to [0, 999999999]
+  if (resultNanos >= 1000000000) {
+    resultSec += 1n;
+    resultNanos -= 1000000000;
+  } else if (resultNanos < 0) {
+    resultSec -= 1n;
+    resultNanos += 1000000000;
+  }
+
+  // Validate range: seconds must be in [TIMESTAMP_MIN_SEC, TIMESTAMP_MAX_SEC]
+  if (resultSec < TIMESTAMP_MIN_SEC || resultSec > TIMESTAMP_MAX_SEC) return undefined;
+  // Additional check: at the maximum second, nanos > 999999999 would push over
+  if (resultSec === TIMESTAMP_MAX_SEC && resultNanos > 999999999) return undefined;
+  return new CelTimestamp(resultSec, resultNanos);
+}
+
+/** Subtract two timestamps, returning a CelDuration or undefined if result out of duration range */
+function subtractTimestamps(a: CelTimestamp, b: CelTimestamp): CelDuration | undefined {
+  const totalNanos = (a.seconds - b.seconds) * 1000000000n + BigInt(a.nanos) - BigInt(b.nanos);
+  return nanosToValidDuration(totalNanos);
 }
 
 /** Lexicographic comparison for bytes */
@@ -494,11 +598,9 @@ export function celToInt(v: unknown): bigint | undefined {
       return undefined;
     }
   }
-  // timestamp (Date) -> seconds since epoch
-  if (v instanceof Date) {
-    const ms = v.getTime();
-    if (Number.isNaN(ms)) return undefined;
-    return BigInt(Math.trunc(ms / 1000));
+  // timestamp -> seconds since epoch
+  if (isCelTimestamp(v)) {
+    return v.seconds;
   }
   return undefined;
 }
@@ -536,6 +638,42 @@ export function celToDouble(v: unknown): number | undefined {
   return undefined;
 }
 
+/** Convert a CelTimestamp to CEL timestamp string (RFC 3339 with nanosecond precision) */
+function timestampToString(ts: CelTimestamp): string {
+  const d = ts.toDate();
+  // Build base ISO string without fractional seconds
+  const year = d.getUTCFullYear();
+  const pad2 = (n: number) => n.toString().padStart(2, "0");
+  const pad4 = (n: number) => n.toString().padStart(4, "0");
+  const base = `${pad4(year)}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}T${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
+
+  if (ts.nanos === 0) {
+    return `${base}Z`;
+  }
+  // Format nanoseconds, trimming trailing zeros
+  const nanoStr = ts.nanos.toString().padStart(9, "0").replace(/0+$/, "");
+  return `${base}.${nanoStr}Z`;
+}
+
+/** Convert a CelDuration to CEL string format (e.g. "1000000s") */
+function durationToString(d: CelDuration): string {
+  if (d.nanos === 0) {
+    return `${d.seconds}s`;
+  }
+  // Has sub-second component
+  const totalNanos = durationToNanos(d);
+  const sign = totalNanos < 0n ? "-" : "";
+  const absTotalNanos = totalNanos < 0n ? -totalNanos : totalNanos;
+  const absSecs = absTotalNanos / 1000000000n;
+  const absNanos = Number(absTotalNanos % 1000000000n);
+  if (absNanos === 0) {
+    return `${sign}${absSecs}s`;
+  }
+  // Format with fractional seconds, trimming trailing zeros
+  const nanoStr = absNanos.toString().padStart(9, "0").replace(/0+$/, "");
+  return `${sign}${absSecs}.${nanoStr}s`;
+}
+
 export function celToString(v: unknown): string | undefined {
   if (isStr(v)) return v;
   if (isInt(v)) return v.toString();
@@ -571,7 +709,8 @@ export function celToString(v: unknown): string | undefined {
     return `{${parts.join(", ")}}`;
   }
   if (isCelType(v)) return v.name;
-  if (v instanceof Date) return v.toISOString();
+  if (isCelTimestamp(v)) return timestampToString(v);
+  if (isCelDuration(v)) return durationToString(v);
   return undefined;
 }
 
@@ -621,13 +760,62 @@ export function celType(v: unknown): CelType {
   if (isList(v)) return new CelType("list");
   if (isMap(v)) return new CelType("map");
   if (isCelType(v)) return new CelType("type");
-  if (v instanceof Date) return new CelType("google.protobuf.Timestamp");
+  if (isCelTimestamp(v)) return new CelType("google.protobuf.Timestamp");
   if (isCelDuration(v)) return new CelType("google.protobuf.Duration");
   return new CelType("unknown");
 }
 
 export function celDyn(v: unknown): unknown {
   return v;
+}
+
+// ── Timestamp Helper ──────────────────────────────────────────────────────
+
+/** A CEL timestamp value: stores seconds since epoch and nanoseconds within the second */
+export class CelTimestamp {
+  constructor(
+    public readonly seconds: bigint,
+    public readonly nanos: number, // 0..999999999
+  ) {}
+
+  /** Convert to milliseconds since epoch (loses sub-ms precision) */
+  toMs(): number {
+    return Number(this.seconds) * 1000 + Math.trunc(this.nanos / 1000000);
+  }
+
+  /** Create a JS Date from this timestamp (loses sub-ms precision) */
+  toDate(): Date {
+    return new Date(this.toMs());
+  }
+
+  /** Create a CelTimestamp from a JS Date */
+  static fromDate(d: Date): CelTimestamp {
+    const ms = d.getTime();
+    const secs = BigInt(Math.trunc(ms / 1000));
+    const nanosFromMs = (((ms % 1000) + 1000) % 1000) * 1000000;
+    return new CelTimestamp(secs, nanosFromMs);
+  }
+
+  /** Create a CelTimestamp from seconds and nanos */
+  static fromSecondsNanos(seconds: bigint, nanos: number): CelTimestamp {
+    // Normalize: nanos must be in [0, 999999999]
+    let s = seconds;
+    let n = nanos;
+    while (n < 0) {
+      s -= 1n;
+      n += 1000000000;
+    }
+    while (n >= 1000000000) {
+      s += 1n;
+      n -= 1000000000;
+    }
+    return new CelTimestamp(s, n);
+  }
+}
+
+/** Check if a value is a CelTimestamp */
+export function isCelTimestamp(v: unknown): v is CelTimestamp {
+  return v instanceof CelTimestamp;
 }
 
 // ── Duration Helper ──────────────────────────────────────────────────────
@@ -650,8 +838,10 @@ export function isCelDuration(v: unknown): v is CelDuration {
  * Returns CelDuration or undefined on error.
  */
 function parseDurationString(s: string): CelDuration | undefined {
-  const re = /^(-)?(\d+(?:\.\d+)?)(s|ms|us|ns|m|h)$/;
-  const match = re.exec(s);
+  // Support compound duration formats like "1h2m3s", "1h30m", "2m30s", etc.
+  // Simple format: optional sign, number, unit
+  const simpleRe = /^(-)?(\d+(?:\.\d+)?)(s|ms|us|ns|m|h)$/;
+  const match = simpleRe.exec(s);
   if (!match) return undefined;
   const [, sign, numStr, unit] = match;
   const num = Number(numStr);
@@ -685,6 +875,11 @@ function parseDurationString(s: string): CelDuration | undefined {
 
   const seconds = BigInt(Math.trunc(totalNanos / 1e9));
   const nanos = Math.round(totalNanos % 1e9);
+
+  // Range validation: total nanos must fit in int64
+  const bigTotalNanos = seconds * 1000000000n + BigInt(nanos);
+  if (bigTotalNanos > INT64_MAX || bigTotalNanos < INT64_MIN) return undefined;
+
   return new CelDuration(seconds, nanos);
 }
 
@@ -696,16 +891,35 @@ export function celDuration(v: unknown): CelDuration | undefined {
 
 // ── Timestamp Helper ─────────────────────────────────────────────────────
 
-export function celTimestamp(v: unknown): Date | undefined {
-  if (v instanceof Date) return v; // identity
+export function celTimestamp(v: unknown): CelTimestamp | undefined {
+  if (isCelTimestamp(v)) return v; // identity
   if (isStr(v)) {
+    // Parse RFC 3339 timestamp string
+    // First try to extract nanoseconds from the string before Date parsing
+    const nanoMatch = /\.(\d+)Z$/.exec(v);
+    let nanos = 0;
+    if (nanoMatch?.[1]) {
+      // Pad or truncate to 9 digits for nanoseconds
+      const nanoStr = nanoMatch[1].padEnd(9, "0").slice(0, 9);
+      nanos = Number.parseInt(nanoStr, 10);
+    }
     const d = new Date(v);
     if (Number.isNaN(d.getTime())) return undefined;
-    return d;
+    // Compute seconds from the Date (drop millisecond fraction since we have nanos)
+    const ms = d.getTime();
+    const seconds = BigInt(Math.trunc(ms / 1000));
+    // If we have nanos from the string, use those; otherwise derive from ms
+    if (!nanoMatch) {
+      nanos = (((ms % 1000) + 1000) % 1000) * 1000000;
+    }
+    // Validate range
+    if (seconds < TIMESTAMP_MIN_SEC || seconds > TIMESTAMP_MAX_SEC) return undefined;
+    return new CelTimestamp(seconds, nanos);
   }
   if (isInt(v)) {
     // int -> timestamp: interpret as seconds since epoch
-    return new Date(Number(v) * 1000);
+    if (v < TIMESTAMP_MIN_SEC || v > TIMESTAMP_MAX_SEC) return undefined;
+    return new CelTimestamp(v, 0);
   }
   return undefined;
 }
@@ -1013,6 +1227,184 @@ export function celAndN(operands: (() => unknown)[]): boolean | undefined {
   return hasError ? undefined : true;
 }
 
+// ── Timestamp / Duration Accessor Helpers ──────────────────────────────────
+
+/**
+ * Convert a timezone offset string like "+05:30" or "-02:00" to minutes offset,
+ * or resolve an IANA timezone name. Returns Date adjusted to that timezone.
+ */
+function getDateInTimezone(d: Date, tz: string): Date | undefined {
+  try {
+    // Use Intl.DateTimeFormat to get the local time parts in the target timezone
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(d);
+    const get = (type: string) => {
+      const part = parts.find((p) => p.type === type);
+      return part ? Number.parseInt(part.value, 10) : 0;
+    };
+    const year = get("year");
+    const month = get("month");
+    const day = get("day");
+    let hour = get("hour");
+    // Intl formats midnight as 24 in some locales
+    if (hour === 24) hour = 0;
+    const minute = get("minute");
+    const second = get("second");
+    // Create a date representing this local time (in UTC coordinates for extraction)
+    return new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Parse timezone string: either IANA name or offset like "+05:30", "-02:00", "02:00"
+ * Returns the timezone string suitable for Intl.DateTimeFormat.
+ */
+function normalizeTimezone(tz: string): string {
+  // Check for offset format: optional sign, digits, colon, digits
+  const offsetMatch = /^([+-]?)(\d{1,2}):(\d{2})$/.exec(tz);
+  if (offsetMatch) {
+    const sign = offsetMatch[1] ?? "";
+    const hours = offsetMatch[2] ?? "0";
+    const minutes = offsetMatch[3] ?? "00";
+    const h = Number.parseInt(hours, 10);
+    const m = Number.parseInt(minutes, 10);
+    if (h === 0 && m === 0) return "UTC";
+    // Build a proper offset string for Intl: needs explicit sign
+    const signStr = sign === "-" ? "-" : "+";
+    return `${signStr}${hours.padStart(2, "0")}:${minutes}`;
+  }
+  // Otherwise, assume IANA timezone name
+  return tz;
+}
+
+/** Get day of year (0-based) for a date */
+function dayOfYear(year: number, month: number, day: number): number {
+  // month is 0-based, day is 1-based
+  const startOfYear = Date.UTC(year, 0, 1);
+  const current = Date.UTC(year, month, day);
+  return Math.floor((current - startOfYear) / 86400000);
+}
+
+/** CEL timestamp.getFullYear() or timestamp.getFullYear(tz) */
+function celGetFullYear(v: unknown, tz?: unknown): bigint | undefined {
+  if (!isCelTimestamp(v)) return undefined;
+  const d = tz !== undefined ? tsInTz(v, tz) : v.toDate();
+  if (!d) return undefined;
+  return BigInt(d.getUTCFullYear());
+}
+
+/** CEL timestamp.getMonth() - 0-based (Jan=0) */
+function celGetMonth(v: unknown, tz?: unknown): bigint | undefined {
+  if (!isCelTimestamp(v)) return undefined;
+  const d = tz !== undefined ? tsInTz(v, tz) : v.toDate();
+  if (!d) return undefined;
+  return BigInt(d.getUTCMonth());
+}
+
+/** CEL timestamp.getDate() - 1-based day of month */
+function celGetDate(v: unknown, tz?: unknown): bigint | undefined {
+  if (!isCelTimestamp(v)) return undefined;
+  const d = tz !== undefined ? tsInTz(v, tz) : v.toDate();
+  if (!d) return undefined;
+  return BigInt(d.getUTCDate());
+}
+
+/** CEL timestamp.getDayOfMonth() - 0-based day of month (getDate - 1) */
+function celGetDayOfMonth(v: unknown, tz?: unknown): bigint | undefined {
+  if (!isCelTimestamp(v)) return undefined;
+  const d = tz !== undefined ? tsInTz(v, tz) : v.toDate();
+  if (!d) return undefined;
+  return BigInt(d.getUTCDate() - 1);
+}
+
+/** CEL timestamp.getDayOfWeek() - 0=Sunday */
+function celGetDayOfWeek(v: unknown, tz?: unknown): bigint | undefined {
+  if (!isCelTimestamp(v)) return undefined;
+  const d = tz !== undefined ? tsInTz(v, tz) : v.toDate();
+  if (!d) return undefined;
+  return BigInt(d.getUTCDay());
+}
+
+/** CEL timestamp.getDayOfYear() - 0-based */
+function celGetDayOfYear(v: unknown, tz?: unknown): bigint | undefined {
+  if (!isCelTimestamp(v)) return undefined;
+  const d = tz !== undefined ? tsInTz(v, tz) : v.toDate();
+  if (!d) return undefined;
+  return BigInt(dayOfYear(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+/** CEL timestamp.getHours() or duration.getHours() */
+function celGetHours(v: unknown, tz?: unknown): bigint | undefined {
+  if (isCelTimestamp(v)) {
+    const d = tz !== undefined ? tsInTz(v, tz) : v.toDate();
+    if (!d) return undefined;
+    return BigInt(d.getUTCHours());
+  }
+  if (isCelDuration(v)) {
+    // Total hours in the duration
+    return v.seconds / 3600n;
+  }
+  return undefined;
+}
+
+/** CEL timestamp.getMinutes() or duration.getMinutes() */
+function celGetMinutes(v: unknown, tz?: unknown): bigint | undefined {
+  if (isCelTimestamp(v)) {
+    const d = tz !== undefined ? tsInTz(v, tz) : v.toDate();
+    if (!d) return undefined;
+    return BigInt(d.getUTCMinutes());
+  }
+  if (isCelDuration(v)) {
+    // Total minutes in the duration
+    return v.seconds / 60n;
+  }
+  return undefined;
+}
+
+/** CEL timestamp.getSeconds() or duration.getSeconds() */
+function celGetSeconds(v: unknown, tz?: unknown): bigint | undefined {
+  if (isCelTimestamp(v)) {
+    const d = tz !== undefined ? tsInTz(v, tz) : v.toDate();
+    if (!d) return undefined;
+    return BigInt(d.getUTCSeconds());
+  }
+  if (isCelDuration(v)) {
+    // Total seconds in the duration
+    return v.seconds;
+  }
+  return undefined;
+}
+
+/** CEL timestamp.getMilliseconds() or duration.getMilliseconds() */
+function celGetMilliseconds(v: unknown, _tz?: unknown): bigint | undefined {
+  if (isCelTimestamp(v)) {
+    // Return milliseconds from the nanos field for sub-second precision
+    return BigInt(Math.trunc(v.nanos / 1000000));
+  }
+  if (isCelDuration(v)) {
+    // Milliseconds component from the nanos field (not total milliseconds)
+    return BigInt(Math.trunc(v.nanos / 1000000));
+  }
+  return undefined;
+}
+
+/** Helper: get CelTimestamp in a timezone, returning a Date for component extraction */
+function tsInTz(v: CelTimestamp, tz: unknown): Date | undefined {
+  if (!isStr(tz)) return undefined;
+  return getDateInTimezone(v.toDate(), normalizeTimezone(tz));
+}
+
 // ── createRuntime ──────────────────────────────────────────────────────────
 
 /** Create the _rt object that generated code references */
@@ -1074,6 +1466,17 @@ export function createRuntime() {
     // Type conversions (timestamp/duration)
     duration: celDuration,
     timestamp: celTimestamp,
+    // Timestamp/Duration accessors
+    getFullYear: celGetFullYear,
+    getMonth: celGetMonth,
+    getDate: celGetDate,
+    getDayOfMonth: celGetDayOfMonth,
+    getDayOfWeek: celGetDayOfWeek,
+    getDayOfYear: celGetDayOfYear,
+    getHours: celGetHours,
+    getMinutes: celGetMinutes,
+    getSeconds: celGetSeconds,
+    getMilliseconds: celGetMilliseconds,
     // Types
     CelUint,
     celUint: (n: bigint) => new CelUint(n),

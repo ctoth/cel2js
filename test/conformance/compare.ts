@@ -1,3 +1,4 @@
+import { isCelDuration, isCelTimestamp } from "../../src/runtime/helpers.js";
 import { isCelType, isCelUint } from "../../src/runtime/types.js";
 
 /**
@@ -60,6 +61,16 @@ export function celDeepEqual(actual: unknown, expected: unknown): boolean {
       if (!celDeepEqual(actual[i], expected[i])) return false;
     }
     return true;
+  }
+
+  // CelTimestamp comparison
+  if (isCelTimestamp(actual) && isCelTimestamp(expected)) {
+    return actual.seconds === expected.seconds && actual.nanos === expected.nanos;
+  }
+
+  // CelDuration comparison
+  if (isCelDuration(actual) && isCelDuration(expected)) {
+    return actual.seconds === expected.seconds && actual.nanos === expected.nanos;
   }
 
   // Map comparison (order-independent)

@@ -1,5 +1,8 @@
 import type { ExprValue } from "@bufbuild/cel-spec/cel/expr/eval_pb.js";
 import type { Value } from "@bufbuild/cel-spec/cel/expr/value_pb.js";
+import { fromBinary } from "@bufbuild/protobuf";
+import { DurationSchema, TimestampSchema } from "@bufbuild/protobuf/wkt";
+import { CelDuration, CelTimestamp } from "../../src/runtime/helpers.js";
 import { CelType, CelUint } from "../../src/runtime/types.js";
 
 /**
@@ -54,8 +57,18 @@ export function protoValueToJS(value: Value): unknown {
       return new CelType(value.kind.value);
     case "enumValue":
       return BigInt(value.kind.value.value);
-    case "objectValue":
-      throw new Error(`objectValue (proto Any) not supported yet: ${value.kind.value.typeUrl}`);
+    case "objectValue": {
+      const any = value.kind.value;
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.Duration") {
+        const dur = fromBinary(DurationSchema, any.value);
+        return new CelDuration(dur.seconds, dur.nanos);
+      }
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.Timestamp") {
+        const ts = fromBinary(TimestampSchema, any.value);
+        return new CelTimestamp(ts.seconds, ts.nanos);
+      }
+      throw new Error(`objectValue (proto Any) not supported yet: ${any.typeUrl}`);
+    }
     case undefined:
       throw new Error("Value has undefined kind");
     default:
