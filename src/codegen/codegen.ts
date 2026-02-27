@@ -2,7 +2,7 @@
 // Wraps astring with custom handling for BigInt literals.
 
 import { GENERATOR, generate } from "astring";
-import type { Program } from "./estree-types.js";
+import type { Program } from "estree";
 
 // astring does not handle BigInt literals out of the box.
 // We extend the base generator to support the `bigint` field on Literal nodes.

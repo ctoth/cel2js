@@ -5,16 +5,15 @@ import type {
   ArrayExpression,
   ArrowFunctionExpression,
   AssignmentExpression,
+  BigIntLiteral,
   BinaryExpression,
   BinaryOperator,
   BlockStatement,
-  CallExpression,
   ConditionalExpression,
   Expression,
   ExpressionStatement,
   Identifier,
   IfStatement,
-  Literal,
   LogicalExpression,
   LogicalOperator,
   MemberExpression,
@@ -22,8 +21,11 @@ import type {
   ObjectExpression,
   Program,
   Property,
+  RegExpLiteral,
   ReturnStatement,
   SequenceExpression,
+  SimpleCallExpression,
+  SimpleLiteral,
   SpreadElement,
   Statement,
   TemplateElement,
@@ -31,7 +33,7 @@ import type {
   UnaryExpression,
   UnaryOperator,
   VariableDeclaration,
-} from "./estree-types.js";
+} from "estree";
 
 // ---------------------------------------------------------------------------
 // Expressions
@@ -41,20 +43,20 @@ export function identifier(name: string): Identifier {
   return { type: "Identifier", name };
 }
 
-export function literal(value: string | number | boolean | null): Literal {
+export function literal(value: string | number | boolean | null): SimpleLiteral {
   return { type: "Literal", value };
 }
 
-export function bigintLiteral(value: bigint): Literal {
+export function bigintLiteral(value: bigint): BigIntLiteral {
   return {
     type: "Literal",
-    value: undefined as unknown as null,
+    value,
     bigint: value.toString(),
     raw: `${value}n`,
   };
 }
 
-export function regexpLiteral(pattern: string, flags: string): Literal {
+export function regexpLiteral(pattern: string, flags: string): RegExpLiteral {
   return {
     type: "Literal",
     value: new RegExp(pattern, flags),
@@ -106,7 +108,7 @@ export function callExpr(
   callee: Expression,
   args: (Expression | SpreadElement)[],
   optional = false,
-): CallExpression {
+): SimpleCallExpression {
   return { type: "CallExpression", callee, arguments: args, optional };
 }
 
@@ -216,7 +218,7 @@ export function program(body: Statement[]): Program {
 
 /** Shorthand for `_rt.methodName(...args)` — the most common codegen pattern.
  *  For dotted names like "math.greatest", uses computed access: `_rt["math.greatest"](...args)`. */
-export function rtCall(method: string, args: (Expression | SpreadElement)[]): CallExpression {
+export function rtCall(method: string, args: (Expression | SpreadElement)[]): SimpleCallExpression {
   const prop = method.includes(".")
     ? memberExpr(identifier("_rt"), literal(method), true)
     : memberExpr(identifier("_rt"), identifier(method));
@@ -242,6 +244,6 @@ export function optionalDot(object: Expression, prop: string): MemberExpression 
 export function optionalCall(
   callee: Expression,
   args: (Expression | SpreadElement)[],
-): CallExpression {
+): SimpleCallExpression {
   return callExpr(callee, args, true);
 }

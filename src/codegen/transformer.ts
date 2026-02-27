@@ -1,6 +1,7 @@
 // CEL AST -> ESTree AST transformer.
 // Walks the CelExpr discriminated union and produces ESTree nodes.
 
+import type { Expression, Program, Statement } from "estree";
 import type { CelExpr } from "../parser/ast.js";
 import {
   arrayExpr,
@@ -22,7 +23,6 @@ import {
   sequenceExpr,
   varDecl,
 } from "./estree-builders.js";
-import type { Expression, Program, Statement } from "./estree-types.js";
 
 // ---------------------------------------------------------------------------
 // Temp variable allocator for logical AND/OR error absorption

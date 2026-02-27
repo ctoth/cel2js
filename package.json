@@ -29,6 +29,7 @@
     "@bufbuild/cel-spec": "^0.4.0",
     "@bufbuild/protobuf": "^2.6.2",
     "@marcbachmann/cel-js": "^7.5.1",
+    "@types/estree": "^1.0.8",
     "cel-js": "^0.8.2",
     "lefthook": "^2.1.1",
     "peggy": "^5.0.6",
