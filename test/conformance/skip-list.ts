@@ -65,5 +65,7 @@ export const SKIP_PATHS: string[][] = [
   // ["bindings_ext"],  -- enabling: bindings extension
   // ["encoders_ext"],  -- enabling: encoder extension functions
   ["block_ext"],
-  ["optionals"],
+  // ["optionals"],  -- enabling: optional values extension
+  // Skip: proto map<string,string> field type semantics differ from CEL map zero-value
+  ["optionals", "optionals", "struct_optional_ofNonZeroValue_map_optindex_field"],
 ];

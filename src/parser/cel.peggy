@@ -376,7 +376,11 @@ MemberTail
   = (S @Access)*
 
 Access
-  = "." S field:Selector S ![(]
+  = ".?" S field:Selector S ![(]
+    {
+      return (prev) => call("_?._", [prev, { kind: "StringLiteral", value: field }]);
+    }
+  / "." S field:Selector S ![(]
     {
       return (prev) => ({
         kind: "Select",
@@ -388,6 +392,10 @@ Access
   / "." S func:Selector S "(" args:ExprList ")"
     {
       return (prev) => maybeExpand(prev, func, args);
+    }
+  / "[?" index:Expr "]"
+    {
+      return (prev) => call("_[?_]", [prev, index]);
     }
   / "[" index:Expr "]"
     {
@@ -421,8 +429,14 @@ Primary
   / "."? S name:Selector
     { return ident(name); }
   / "(" @Expr ")"
-  / "[" elements:ExprList ","? S "]"
-    { return listExpr(elements); }
+  / "[" elements:OptExprList ","? S "]"
+    {
+      const hasOptional = elements.some(e => e.optional);
+      if (hasOptional) {
+        return { kind: "CreateList", elements: elements.map(e => e.expr), optionalIndices: elements.reduce((acc, e, i) => { if (e.optional) acc.push(i); return acc; }, []) };
+      }
+      return listExpr(elements.map(e => e.expr));
+    }
   / "{" entries:MapInits ","? S "}"
     {
       return { kind: "CreateMap", entries };
@@ -433,16 +447,22 @@ Primary
 ExprList
   = Expr|0.., ","|
 
+OptExprList
+  = (
+      S opt:"?"? expr:Expr
+      { return { expr, optional: opt !== null }; }
+    )|0.., ","|
+
 FieldInits
   = (
-      S key:Selector $(S ":") value:Expr
-      { return { field: key, value }; }
+      S opt:"?"? key:Selector $(S ":") value:Expr
+      { return { field: key, value, optional: opt !== null }; }
     )|0.., ","|
 
 MapInits
   = (
-      key:Expr ":" value:Expr
-      { return { key, value }; }
+      S opt:"?"? key:Expr ":" value:Expr
+      { return { key, value, optional: opt !== null }; }
     )|0.., ","|
 
 /* ── identifiers ────────────────────────────────────────────── */

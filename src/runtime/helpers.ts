@@ -1,5 +1,5 @@
 import type { CelValue } from "./types.js";
-import { CelType, CelUint, isCelType, isCelUint } from "./types.js";
+import { CelOptional, CelType, CelUint, isCelOptional, isCelType, isCelUint } from "./types.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -292,6 +292,13 @@ export function celEq(a: unknown, b: unknown): boolean | undefined {
     return a.seconds === b.seconds && a.nanos === b.nanos;
   }
 
+  // CelOptional equality
+  if (isCelOptional(a) && isCelOptional(b)) {
+    if (!a.hasValue() && !b.hasValue()) return true;
+    if (!a.hasValue() || !b.hasValue()) return false;
+    return celEq(a.value(), b.value());
+  }
+
   // CEL _==_ is defined for all types: incompatible types return false, not error
   return false;
 }
@@ -500,6 +507,11 @@ export function celSize(v: unknown): bigint | undefined {
 }
 
 export function celIndex(obj: unknown, key: unknown): CelValue | undefined {
+  // Optional chaining: indexing a CelOptional auto-wraps in optional
+  if (isCelOptional(obj)) {
+    if (!obj.hasValue()) return CelOptional.none() as CelValue;
+    return celOptionalIndex(obj.value(), key) as CelValue | undefined;
+  }
   if (isList(obj)) {
     // List index: accept int, uint, or double (if double is a whole number)
     let idx: number;
@@ -527,6 +539,31 @@ export function celIndex(obj: unknown, key: unknown): CelValue | undefined {
 
 export function celSelect(obj: unknown, field: string): CelValue | undefined {
   if (obj === null || obj === undefined) return undefined;
+  // When selecting from a CelOptional, use optional-like semantics:
+  // missing fields produce CelOptional.none(), type errors produce undefined (error).
+  if (isCelOptional(obj)) {
+    if (!obj.hasValue()) return CelOptional.none() as CelValue;
+    const inner = obj.value();
+    if (inner === null || inner === undefined) return undefined; // error: selecting from null/undefined
+    if (isMap(inner)) {
+      if (mapHas(inner as Map<CelValue, CelValue>, field)) {
+        return CelOptional.of(mapGet(inner as Map<CelValue, CelValue>, field)) as CelValue;
+      }
+      return CelOptional.none() as CelValue; // key missing → none
+    }
+    if (typeof inner === "object") {
+      if (isStruct(inner)) {
+        // For structs, check if field was explicitly set
+        const keys = Object.keys(inner as Record<string, unknown>).filter((k) => k !== "__type");
+        if (keys.includes(field)) {
+          return CelOptional.of((inner as Record<string, CelValue>)[field]) as CelValue;
+        }
+        return CelOptional.none() as CelValue;
+      }
+      return CelOptional.of((inner as Record<string, CelValue>)[field]) as CelValue;
+    }
+    return undefined; // error: selecting from non-object/non-map
+  }
   if (isMap(obj)) {
     // CEL: map.field is equivalent to map["field"]
     return mapGet(obj, field) as CelValue | undefined;
@@ -1308,6 +1345,7 @@ export function celType(v: unknown): CelType {
   if (isList(v)) return new CelType("list");
   if (isMap(v)) return new CelType("map");
   if (isCelType(v)) return new CelType("type");
+  if (isCelOptional(v)) return new CelType("optional_type");
   if (isCelTimestamp(v)) return new CelType("google.protobuf.Timestamp");
   if (isCelDuration(v)) return new CelType("google.protobuf.Duration");
   return new CelType("unknown");
@@ -1643,6 +1681,11 @@ export function celMakeStruct(_name: string, entries: [string, CelValue][]): Cel
 /** Check if a field exists on an object (the `has()` macro) */
 export function celHas(obj: unknown, field: string): boolean {
   if (obj === null || obj === undefined) return false;
+  // has() on a CelOptional: unwrap and check the field on the inner value
+  if (isCelOptional(obj)) {
+    if (!obj.hasValue()) return false;
+    return celHas(obj.value(), field);
+  }
   if (obj instanceof Map) {
     return obj.has(field);
   }
@@ -2221,6 +2264,250 @@ function celBase64Decode(a: unknown): Uint8Array | undefined {
   return new Uint8Array(bytes);
 }
 
+// ── Optional Helpers ───────────────────────────────────────────────────────
+
+/** Check if a value is a "zero value" for optional.ofNonZeroValue() */
+function isZeroValue(v: unknown): boolean {
+  if (v === null) return true;
+  if (v === false) return true;
+  if (v === 0n) return true;
+  if (isCelUint(v) && v.value === 0n) return true;
+  if (v === 0) return true;
+  if (v === "") return true;
+  if (isBytes(v) && v.length === 0) return true;
+  if (isList(v) && v.length === 0) return true;
+  if (isMap(v) && v.size === 0) return true;
+  if (isCelDuration(v) && v.seconds === 0n && v.nanos === 0) return true;
+  if (isCelTimestamp(v) && v.seconds === 0n && v.nanos === 0) return true;
+  // Struct (proto message) with no explicitly set fields is zero value
+  if (isStruct(v)) {
+    const keys = Object.keys(v).filter((k) => k !== "__type");
+    if (keys.length === 0) return true;
+  }
+  return false;
+}
+
+/** optional.none() */
+export function celOptionalNone(): CelOptional {
+  return CelOptional.none();
+}
+
+/** optional.of(value) */
+export function celOptionalOf(value: unknown): CelOptional | undefined {
+  if (value === undefined) return undefined;
+  return CelOptional.of(value);
+}
+
+/** optional.ofNonZeroValue(value) */
+export function celOptionalOfNonZeroValue(value: unknown): CelOptional | undefined {
+  if (value === undefined) return undefined;
+  if (isZeroValue(value)) return CelOptional.none();
+  return CelOptional.of(value);
+}
+
+/** optional.hasValue() — check if optional has a value */
+export function celOptionalHasValue(v: unknown): boolean | undefined {
+  if (isCelOptional(v)) return v.hasValue();
+  return undefined;
+}
+
+/** optional.value() — unwrap the optional */
+export function celOptionalValue(v: unknown): unknown {
+  if (isCelOptional(v)) return v.value();
+  return undefined;
+}
+
+/** optional.or(other) — return this if has value, otherwise other */
+export function celOptionalOr(a: unknown, b: unknown): CelOptional | undefined {
+  if (isCelOptional(a)) {
+    if (a.hasValue()) return a;
+    if (isCelOptional(b)) return b;
+    return undefined;
+  }
+  return undefined;
+}
+
+/** optional.orValue(default) — return value if has value, otherwise default */
+export function celOptionalOrValue(a: unknown, b: unknown): unknown {
+  if (isCelOptional(a)) {
+    if (a.hasValue()) return a.value();
+    return b;
+  }
+  return undefined;
+}
+
+/** optional.optMap(varName, fn) — map over optional value */
+export function celOptionalOptMap(
+  a: unknown,
+  fn: (v: unknown) => unknown,
+): CelOptional | undefined {
+  if (isCelOptional(a)) {
+    if (!a.hasValue()) return CelOptional.none();
+    const result = fn(a.value());
+    if (result === undefined) return undefined;
+    return CelOptional.of(result);
+  }
+  return undefined;
+}
+
+/** optional.optFlatMap(varName, fn) — flatMap over optional value */
+export function celOptionalOptFlatMap(
+  a: unknown,
+  fn: (v: unknown) => unknown,
+): CelOptional | undefined {
+  if (isCelOptional(a)) {
+    if (!a.hasValue()) return CelOptional.none();
+    const result = fn(a.value());
+    if (result === undefined) return undefined;
+    if (isCelOptional(result)) return result;
+    return undefined;
+  }
+  return undefined;
+}
+
+/** Optional select: x.?field — returns optional.of(x.field) if field exists, otherwise optional.none() */
+export function celOptionalSelect(obj: unknown, field: string): CelOptional | undefined {
+  // If obj is an optional, unwrap it first
+  if (isCelOptional(obj)) {
+    if (!obj.hasValue()) return CelOptional.none();
+    return celOptionalSelect(obj.value(), field);
+  }
+  if (obj === null || obj === undefined) return CelOptional.none();
+  if (isMap(obj)) {
+    if (mapHas(obj, field)) {
+      const val = mapGet(obj, field);
+      return CelOptional.of(val);
+    }
+    return CelOptional.none();
+  }
+  if (typeof obj === "object") {
+    const record = obj as Record<string, unknown>;
+    // For struct types (proto messages), check if the field was explicitly set
+    // The struct proxy returns null for absent fields, but for optional select
+    // we need to check the real underlying object
+    if (isStruct(obj)) {
+      // Check the actual target object (not the proxy default)
+      // Use Object.getOwnPropertyDescriptor or check "own" keys
+      const keys = Object.keys(record).filter((k) => k !== "__type");
+      if (keys.includes(field)) {
+        return CelOptional.of(record[field]);
+      }
+      return CelOptional.none();
+    }
+    if (field in record) {
+      return CelOptional.of(record[field]);
+    }
+    return CelOptional.none();
+  }
+  return CelOptional.none();
+}
+
+/** Optional index: x[?key] — returns optional.of(x[key]) if key exists, otherwise optional.none() */
+export function celOptionalIndex(obj: unknown, key: unknown): CelOptional | undefined {
+  // If obj is an optional, unwrap it first
+  if (isCelOptional(obj)) {
+    if (!obj.hasValue()) return CelOptional.none();
+    return celOptionalIndex(obj.value(), key);
+  }
+  if (obj === null || obj === undefined) return CelOptional.none();
+  if (isList(obj)) {
+    let idx: number;
+    if (isInt(key)) {
+      idx = Number(key);
+    } else if (isCelUint(key)) {
+      idx = Number(key.value);
+    } else if (isDouble(key)) {
+      if (!Number.isFinite(key) || key !== Math.trunc(key)) return undefined;
+      idx = key;
+    } else {
+      return undefined;
+    }
+    if (idx < 0 || idx >= obj.length) return CelOptional.none();
+    return CelOptional.of(obj[idx]);
+  }
+  if (isMap(obj)) {
+    if (mapHas(obj, key as CelValue)) {
+      return CelOptional.of(mapGet(obj, key as CelValue));
+    }
+    return CelOptional.none();
+  }
+  return undefined;
+}
+
+/** Create a list with optional entries — optional entries are only included if they have values */
+export function celMakeListOptional(
+  elements: unknown[],
+  optionalIndices: number[],
+): CelValue[] | undefined {
+  const result: CelValue[] = [];
+  const optSet = new Set(optionalIndices);
+  for (let i = 0; i < elements.length; i++) {
+    const elem = elements[i];
+    if (optSet.has(i)) {
+      if (elem === undefined) return undefined;
+      if (isCelOptional(elem)) {
+        if (elem.hasValue()) {
+          result.push(elem.value() as CelValue);
+        }
+        // If no value, skip this element
+      } else {
+        // Non-optional value at optional index — include it
+        result.push(elem as CelValue);
+      }
+    } else {
+      if (elem === undefined) return undefined;
+      result.push(elem as CelValue);
+    }
+  }
+  return result;
+}
+
+/** Create a map with optional entries — optional entries are only included if their values are present optionals */
+export function celMakeMapOptional(
+  entries: [CelValue, CelValue, boolean][],
+): Map<CelValue, CelValue> | undefined {
+  const m = new Map<CelValue, CelValue>();
+  for (const [k, v, optional] of entries) {
+    if (optional) {
+      if (v === undefined) return undefined;
+      if (isCelOptional(v)) {
+        if (v.hasValue()) {
+          m.set(k, v.value() as CelValue);
+        }
+        // If no value, skip this entry
+      } else {
+        m.set(k, v);
+      }
+    } else {
+      m.set(k, v);
+    }
+  }
+  return m;
+}
+
+/** Create a struct with optional entries — optional entries only included if value has value */
+export function celMakeStructOptional(
+  _name: string,
+  entries: [string, CelValue, boolean][],
+): CelValue {
+  const resolvedEntries: [string, CelValue][] = [];
+  for (const [field, value, optional] of entries) {
+    if (optional) {
+      if (isCelOptional(value)) {
+        if (value.hasValue()) {
+          resolvedEntries.push([field, value.value() as CelValue]);
+        }
+        // If no value, skip this field
+      } else {
+        resolvedEntries.push([field, value]);
+      }
+    } else {
+      resolvedEntries.push([field, value]);
+    }
+  }
+  return celMakeStruct(_name, resolvedEntries);
+}
+
 // ── createRuntime ──────────────────────────────────────────────────────────
 
 /** Create the _rt object that generated code references */
@@ -2333,5 +2620,22 @@ export function createRuntime() {
     // Encoder extensions
     "base64.encode": celBase64Encode,
     "base64.decode": celBase64Decode,
+    // Optional extension
+    "optional.none": celOptionalNone,
+    "optional.of": celOptionalOf,
+    "optional.ofNonZeroValue": celOptionalOfNonZeroValue,
+    optionalHasValue: celOptionalHasValue,
+    optionalValue: celOptionalValue,
+    optionalOr: celOptionalOr,
+    optionalOrValue: celOptionalOrValue,
+    optionalOptMap: celOptionalOptMap,
+    optionalOptFlatMap: celOptionalOptFlatMap,
+    optionalSelect: celOptionalSelect,
+    optionalIndex: celOptionalIndex,
+    makeListOptional: celMakeListOptional,
+    makeMapOptional: celMakeMapOptional,
+    makeStructOptional: celMakeStructOptional,
+    CelOptional,
+    isCelOptional,
   };
 }

@@ -63,11 +63,14 @@ export interface Call {
 export interface CreateList {
   readonly kind: "CreateList";
   readonly elements: readonly CelExpr[];
+  /** Indices of elements that are optional (prefixed with ?) */
+  readonly optionalIndices?: readonly number[] | undefined;
 }
 
 export interface MapEntry {
   readonly key: CelExpr;
   readonly value: CelExpr;
+  readonly optional?: boolean | undefined;
 }
 
 export interface CreateMap {
@@ -78,6 +81,7 @@ export interface CreateMap {
 export interface StructFieldEntry {
   readonly field: string;
   readonly value: CelExpr;
+  readonly optional?: boolean | undefined;
 }
 
 export interface CreateStruct {

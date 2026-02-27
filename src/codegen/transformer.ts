@@ -130,6 +130,7 @@ const CEL_TYPE_CONSTANTS = new Set([
   "map",
   "type",
   "null_type",
+  "optional_type",
 ]);
 
 /** Safe array index — asserts element exists (length already validated by caller). */
@@ -300,6 +301,8 @@ const OPERATOR_TO_RT: Record<string, string> = {
   "_==_": "eq",
   "_!=_": "ne",
   "_[_]": "index",
+  "_?._": "optionalSelect",
+  "_[?_]": "optionalIndex",
   "@in": "in",
 };
 
@@ -323,7 +326,25 @@ const GLOBAL_FUNC_TO_RT: Record<string, string> = {
 };
 
 /** Known extension namespaces — calls like math.fn() route to _rt["math.fn"]() */
-const NAMESPACE_PREFIXES = new Set(["math", "base64"]);
+const NAMESPACE_PREFIXES = new Set(["math", "base64", "optional"]);
+
+/** Optional member methods — these get special routing to optionalXxx runtime methods */
+const OPTIONAL_MEMBER_METHODS = new Set([
+  "hasValue",
+  "value",
+  "or",
+  "orValue",
+  "optMap",
+  "optFlatMap",
+]);
+
+/** Optional member methods -> _rt method names */
+const OPTIONAL_MEMBER_TO_RT: Record<string, string> = {
+  hasValue: "optionalHasValue",
+  value: "optionalValue",
+  or: "optionalOr",
+  orValue: "optionalOrValue",
+};
 
 /** Known member functions -> _rt method names (receiver becomes first arg) */
 const MEMBER_FUNC_TO_RT: Record<string, string> = {
@@ -404,14 +425,36 @@ function transformExpr(node: CelExpr, temps: TempAllocator, bindings: Set<string
 
     // -- CreateList -----------------------------------------------------
 
-    case "CreateList":
+    case "CreateList": {
+      const hasOptional = node.optionalIndices !== undefined && node.optionalIndices.length > 0;
+      if (hasOptional) {
+        return rtCall("makeListOptional", [
+          arrayExpr(node.elements.map((e) => transformExpr(e, temps, bindings))),
+          arrayExpr((node.optionalIndices ?? []).map((i) => literal(i))),
+        ]);
+      }
       return rtCall("makeList", [
         arrayExpr(node.elements.map((e) => transformExpr(e, temps, bindings))),
       ]);
+    }
 
     // -- CreateMap ------------------------------------------------------
 
-    case "CreateMap":
+    case "CreateMap": {
+      const hasOptional = node.entries.some((e) => e.optional);
+      if (hasOptional) {
+        return rtCall("makeMapOptional", [
+          arrayExpr(
+            node.entries.map((entry) =>
+              arrayExpr([
+                transformExpr(entry.key, temps, bindings),
+                transformExpr(entry.value, temps, bindings),
+                literal(entry.optional === true),
+              ]),
+            ),
+          ),
+        ]);
+      }
       return rtCall("makeMap", [
         arrayExpr(
           node.entries.map((entry) =>
@@ -422,10 +465,26 @@ function transformExpr(node: CelExpr, temps: TempAllocator, bindings: Set<string
           ),
         ),
       ]);
+    }
 
     // -- CreateStruct ---------------------------------------------------
 
-    case "CreateStruct":
+    case "CreateStruct": {
+      const hasOptional = node.entries.some((e) => e.optional);
+      if (hasOptional) {
+        return rtCall("makeStructOptional", [
+          literal(node.messageName),
+          arrayExpr(
+            node.entries.map((entry) =>
+              arrayExpr([
+                literal(entry.field),
+                transformExpr(entry.value, temps, bindings),
+                literal(entry.optional === true),
+              ]),
+            ),
+          ),
+        ]);
+      }
       return rtCall("makeStruct", [
         literal(node.messageName),
         arrayExpr(
@@ -434,6 +493,7 @@ function transformExpr(node: CelExpr, temps: TempAllocator, bindings: Set<string
           ),
         ),
       ]);
+    }
 
     // -- Comprehension --------------------------------------------------
 
@@ -537,6 +597,29 @@ function transformCall(
   if (target !== undefined && target.kind === "Ident" && NAMESPACE_PREFIXES.has(target.name)) {
     const transformedArgs = args.map((a) => transformExpr(a, temps, bindings));
     return rtCall(`${target.name}.${fn}`, transformedArgs);
+  }
+
+  // -- Optional member methods: hasValue, value, or, orValue, optMap, optFlatMap
+  if (target !== undefined && OPTIONAL_MEMBER_METHODS.has(fn)) {
+    const receiver = transformExpr(target, temps, bindings);
+    // optMap and optFlatMap: first arg is a variable, second is an expression body
+    if ((fn === "optMap" || fn === "optFlatMap") && args.length === 2) {
+      const varNode = at(args, 0);
+      if (varNode.kind !== "Ident") {
+        throw new Error(`${fn}: first argument must be an identifier`);
+      }
+      const varName = varNode.name;
+      const innerBindings = new Set(bindings);
+      innerBindings.add(varName);
+      const bodyExpr = transformExpr(at(args, 1), temps, innerBindings);
+      const rtName = fn === "optMap" ? "optionalOptMap" : "optionalOptFlatMap";
+      return rtCall(rtName, [receiver, arrowFn([identifier(varName)], bodyExpr, true)]);
+    }
+    const transformedArgs = args.map((a) => transformExpr(a, temps, bindings));
+    const rtName = OPTIONAL_MEMBER_TO_RT[fn];
+    if (rtName !== undefined) {
+      return rtCall(rtName, [receiver, ...transformedArgs]);
+    }
   }
 
   // -- Member method call: obj.method(args) -> _rt.method(obj, ...args) -
