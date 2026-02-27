@@ -51,8 +51,16 @@ export const SKIP_PATHS: string[][] = [
   // ["macros2"],  -- enabled: macro operations (v2)
 
   // Proto integration
-  ["proto2"],
-  ["proto3"],
+  // ["proto2"],  -- enabled: proto2 basics (162/183 passing)
+  // ["proto3"],  -- enabled: proto3 basics (all passing)
+  // Skip: google.protobuf.Struct field values are doubles in proto but BigInts in CEL integer literals
+  ["proto2", "literal_wellknown", "struct"],
+  ["proto3", "literal_wellknown", "struct"],
+  // Skip: proto2 explicit default values require schema-level default info (e.g. single_int32 defaults to -32)
+  ["proto2", "empty_field", "scalar_with_default"],
+  // Skip: proto2 extensions require full extension registry infrastructure
+  ["proto2", "extensions_has"],
+  ["proto2", "extensions_get"],
   ["dynamic"],
   ["enums"],
   ["wrappers"],

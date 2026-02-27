@@ -90,5 +90,29 @@ export function celDeepEqual(actual: unknown, expected: unknown): boolean {
     return true;
   }
 
+  // Struct comparison (plain objects with __type and STRUCT_FIELDS)
+  if (
+    typeof actual === "object" &&
+    typeof expected === "object" &&
+    "__type" in (actual as Record<string, unknown>) &&
+    "__type" in (expected as Record<string, unknown>)
+  ) {
+    const actualObj = actual as Record<string | symbol, unknown>;
+    const expectedObj = expected as Record<string | symbol, unknown>;
+    if (actualObj.__type !== expectedObj.__type) return false;
+
+    const STRUCT_FIELDS = Symbol.for("cel.struct.fields");
+    const actualFields = actualObj[STRUCT_FIELDS] as Set<string> | undefined;
+    const expectedFields = expectedObj[STRUCT_FIELDS] as Set<string> | undefined;
+
+    if (!actualFields || !expectedFields) return false;
+    if (actualFields.size !== expectedFields.size) return false;
+    for (const field of expectedFields) {
+      if (!actualFields.has(field)) return false;
+      if (!celDeepEqual(actualObj[field], expectedObj[field])) return false;
+    }
+    return true;
+  }
+
   return false;
 }

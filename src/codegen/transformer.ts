@@ -200,7 +200,9 @@ function buildQualifiedResolution(
   // outermost test (checked first at runtime), matching CEL's
   // longest-prefix-wins semantics.
   let result: Expression = fallback;
-  for (let i = levels.length - 2; i >= 0; i--) {
+  // Include all levels including the root name level (levels.length - 1)
+  // so that _qb["rootName"] is checked before falling through to the raw binding parameter.
+  for (let i = levels.length - 1; i >= 0; i--) {
     const level = levels[i] as { prefix: string; remaining: string[] };
     const key = level.prefix;
     const lookupExpr: Expression = memberExpr(_b, literal(key), true);
@@ -256,8 +258,9 @@ function buildQualifiedHas(
 
   // Build from shortest to longest so the longest prefix is the outermost
   // test (checked first at runtime), matching CEL longest-prefix-wins.
+  // Include all levels including root name level so _qb["rootName"] is checked.
   let result: Expression = fallback;
-  for (let i = levels.length - 2; i >= 0; i--) {
+  for (let i = levels.length - 1; i >= 0; i--) {
     const level = levels[i] as { prefix: string; remaining: string[] };
     const key = level.prefix;
 

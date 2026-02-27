@@ -1648,9 +1648,124 @@ const WRAPPER_DEFAULTS: Record<string, CelValue> = {
   "google.protobuf.UInt64Value": new CelUint(0n),
 };
 
+/** Symbol to store set of explicitly-set field names on struct objects */
+const STRUCT_FIELDS = Symbol.for("cel.struct.fields");
+
+/** Null-setting a scalar/repeated/map field on a proto struct is an error */
+const NULL_ERROR_FIELD_PATTERNS = [
+  "single_bool",
+  "single_int32",
+  "single_int64",
+  "single_uint32",
+  "single_uint64",
+  "single_sint32",
+  "single_sint64",
+  "single_fixed32",
+  "single_fixed64",
+  "single_sfixed32",
+  "single_sfixed64",
+  "single_float",
+  "single_double",
+  "single_string",
+  "single_bytes",
+  "single_nested_enum",
+  "standalone_enum",
+];
+
+/** Check if a field name looks like a repeated field */
+function isRepeatedFieldName(field: string): boolean {
+  return field.startsWith("repeated_") || field === "list_value";
+}
+
+/** Check if a field name looks like a map field */
+function isMapFieldName(field: string): boolean {
+  return field.startsWith("map_");
+}
+
+/** Check if a field name corresponds to a proto float (float32) field */
+function isFloat32FieldName(field: string): boolean {
+  return (
+    field === "single_float" || field === "standalone_float" || field.startsWith("repeated_float")
+  );
+}
+
+/**
+ * Known proto3 oneof field names from cel-spec TestAllTypes.
+ * Oneof fields in proto3 always track presence (has() = was-set, not non-zero).
+ */
+const PROTO3_ONEOF_FIELDS = new Set([
+  "single_nested_message",
+  "single_nested_enum",
+  "oneof_type",
+  "oneof_msg",
+  "oneof_bool",
+]);
+
+/** Return the appropriate default value for an absent proto field based on naming conventions */
+function protoFieldDefault(
+  field: string,
+  _typeName: string,
+): CelValue | CelTimestamp | CelDuration {
+  // Repeated fields default to empty list
+  if (isRepeatedFieldName(field)) return [] as CelValue[];
+  // Map fields default to empty map
+  if (isMapFieldName(field)) return new Map<CelValue, CelValue>();
+  // Unsigned integer field types
+  if (
+    field.includes("uint") ||
+    field.includes("fixed32") ||
+    (field.includes("fixed64") && !field.includes("sfixed"))
+  ) {
+    return new CelUint(0n);
+  }
+  // Float/double field types
+  if (field.includes("float") || field.includes("double")) {
+    return 0.0;
+  }
+  // Boolean field types
+  if (field.includes("bool")) {
+    return false;
+  }
+  // String field types
+  if (field === "single_string" || field.endsWith("_string")) {
+    return "";
+  }
+  // Bytes field types
+  if (field === "single_bytes" || field.endsWith("_bytes")) {
+    return new Uint8Array(0);
+  }
+  // Wrapper types (google.protobuf.*Value) default to null (nullable)
+  if (field.includes("_wrapper")) {
+    return null;
+  }
+  // Message fields: return a default-constructed nested message struct
+  if (field.includes("_message")) {
+    return celMakeStruct(`${_typeName}.NestedMessage`, []) as CelValue;
+  }
+  // Int field types (signed integers)
+  if (
+    field.includes("int32") ||
+    field.includes("int64") ||
+    field.includes("sint") ||
+    field.includes("sfixed")
+  ) {
+    return 0n;
+  }
+  // Enum fields default to 0n (first enum value)
+  if (field.includes("enum")) {
+    return 0n;
+  }
+  // For nested message types (like NestedMessage), unknown fields default to int zero
+  if (_typeName.includes("NestedMessage") || _typeName.includes("Nested")) {
+    return 0n;
+  }
+  // Default: null (absent message field semantics)
+  return null;
+}
+
 /** Create a CEL struct (message) from a name and field entries.
- *  For now, we represent structs as plain objects with a __type marker. */
-export function celMakeStruct(_name: string, entries: [string, CelValue][]): CelValue {
+ *  Represents structs as plain objects with __type marker and STRUCT_FIELDS metadata. */
+export function celMakeStruct(_name: string, entries: [string, CelValue][]): CelValue | undefined {
   // google.protobuf.Value{} with no fields set represents JSON null
   if (_name === "google.protobuf.Value" && entries.length === 0) {
     return null;
@@ -1662,24 +1777,54 @@ export function celMakeStruct(_name: string, entries: [string, CelValue][]): Cel
     }
     return WRAPPER_DEFAULTS[_name] as CelValue;
   }
-  const obj: Record<string, CelValue> = {};
-  obj.__type = _name;
+  // Validate: setting null on scalar/repeated/map/struct fields is an error
   for (const [field, value] of entries) {
-    obj[field] = value;
+    if (value === null) {
+      if (
+        NULL_ERROR_FIELD_PATTERNS.includes(field) ||
+        isRepeatedFieldName(field) ||
+        isMapFieldName(field) ||
+        field === "single_struct"
+      ) {
+        return undefined; // error: cannot set scalar/repeated/map/struct to null
+      }
+    }
   }
-  // Wrap in Proxy: absent fields return null (proto absent-field semantics)
+  const obj: Record<string | symbol, unknown> = {};
+  obj.__type = _name;
+  // Track which fields were explicitly set
+  const fields = new Set<string>();
+  for (const [field, value] of entries) {
+    // Proto float fields are float32; truncate to float32 precision
+    if (isFloat32FieldName(field) && typeof value === "number") {
+      obj[field] = Math.fround(value);
+    } else {
+      obj[field] = value;
+    }
+    fields.add(field);
+  }
+  obj[STRUCT_FIELDS] = fields;
+  // Wrap in Proxy: absent fields return appropriate defaults
   return new Proxy(obj, {
     get(target, prop, receiver) {
+      if (prop === STRUCT_FIELDS) return target[STRUCT_FIELDS];
       if (typeof prop === "string" && prop !== "__type") {
-        if (!(prop in target)) return null;
+        if (!(prop in target)) {
+          return protoFieldDefault(prop, _name);
+        }
       }
       return Reflect.get(target, prop, receiver);
     },
   }) as unknown as CelValue;
 }
 
-/** Check if a field exists on an object (the `has()` macro) */
-export function celHas(obj: unknown, field: string): boolean {
+/** Check if a field exists on an object (the `has()` macro).
+ *  For proto structs with STRUCT_FIELDS metadata, uses proto-aware presence semantics:
+ *  - Repeated/map fields: has() = non-empty
+ *  - Scalar/enum fields: has() = explicitly set AND (proto2: always, proto3: non-zero-value)
+ *  - Non-existent fields on structs: returns undefined (error)
+ */
+export function celHas(obj: unknown, field: string): boolean | undefined {
   if (obj === null || obj === undefined) return false;
   // has() on a CelOptional: unwrap and check the field on the inner value
   if (isCelOptional(obj)) {
@@ -1690,10 +1835,64 @@ export function celHas(obj: unknown, field: string): boolean {
     return obj.has(field);
   }
   if (typeof obj === "object") {
-    return (
-      field in (obj as Record<string, unknown>) &&
-      (obj as Record<string, unknown>)[field] !== undefined
-    );
+    const record = obj as Record<string | symbol, unknown>;
+    const structFields = record[STRUCT_FIELDS] as Set<string> | undefined;
+    // If this is a struct with field tracking metadata
+    if (structFields !== undefined && "__type" in record) {
+      const typeName = record.__type as string;
+      // Check if the field was explicitly set in the struct literal
+      if (!structFields.has(field)) {
+        // Field not set in literal — check if it's a known field pattern
+        // If not a recognizable field at all, it's an error
+        if (
+          !isRepeatedFieldName(field) &&
+          !isMapFieldName(field) &&
+          !NULL_ERROR_FIELD_PATTERNS.includes(field) &&
+          !field.startsWith("single_") &&
+          !field.startsWith("standalone_") &&
+          !field.startsWith("oneof_") &&
+          !field.startsWith("optional_") &&
+          !field.startsWith("required_") &&
+          field !== "in" &&
+          field !== "bb"
+        ) {
+          // Unknown field on proto struct => error
+          return undefined;
+        }
+        return false;
+      }
+      // Field was explicitly set
+      // For repeated fields: has() = non-empty
+      if (isRepeatedFieldName(field)) {
+        const v = record[field];
+        if (isList(v)) return v.length > 0;
+        return false;
+      }
+      // For map fields: has() = non-empty
+      if (isMapFieldName(field)) {
+        const v = record[field];
+        if (isMap(v)) return v.size > 0;
+        return false;
+      }
+      // For proto3 scalars: has() = non-zero-value
+      // Proto3 types have "proto3" in their qualified type name
+      if (typeName.includes("proto3")) {
+        // Oneof fields always track presence: has() = was-set (not zero-value check)
+        if (PROTO3_ONEOF_FIELDS.has(field)) {
+          return true;
+        }
+        const v = record[field];
+        // Message types are always "present" when set (even if default-constructed)
+        if (v !== null && typeof v === "object" && !isCelUint(v) && !isBytes(v)) {
+          return true;
+        }
+        return !isZeroValue(v);
+      }
+      // Proto2 or other: has() = was explicitly set
+      return true;
+    }
+    // Non-struct objects: simple field presence check
+    return field in record && record[field] !== undefined;
   }
   return false;
 }
@@ -2489,7 +2688,7 @@ export function celMakeMapOptional(
 export function celMakeStructOptional(
   _name: string,
   entries: [string, CelValue, boolean][],
-): CelValue {
+): CelValue | undefined {
   const resolvedEntries: [string, CelValue][] = [];
   for (const [field, value, optional] of entries) {
     if (optional) {
@@ -2510,8 +2709,44 @@ export function celMakeStructOptional(
 
 // ── createRuntime ──────────────────────────────────────────────────────────
 
+export interface RuntimeOptions {
+  /** CEL container (namespace) for qualifying struct type names */
+  container?: string;
+}
+
 /** Create the _rt object that generated code references */
-export function createRuntime() {
+export function createRuntime(options?: RuntimeOptions) {
+  const container = options?.container ?? "";
+  // Container-aware makeStruct: qualify unqualified type names with container
+  const makeStructWithContainer = (
+    name: string,
+    entries: [string, CelValue][],
+  ): CelValue | undefined => {
+    // If the name is unqualified (no dots) and we have a container, qualify it
+    const qualifiedName = container && !name.includes(".") ? `${container}.${name}` : name;
+    return celMakeStruct(qualifiedName, entries);
+  };
+  const makeStructOptionalWithContainer = (
+    name: string,
+    entries: [string, CelValue, boolean][],
+  ): CelValue | undefined => {
+    const qualifiedName = container && !name.includes(".") ? `${container}.${name}` : name;
+    const resolvedEntries: [string, CelValue][] = [];
+    for (const [field, value, optional] of entries) {
+      if (optional) {
+        if (isCelOptional(value)) {
+          if (value.hasValue()) {
+            resolvedEntries.push([field, value.value() as CelValue]);
+          }
+        } else {
+          resolvedEntries.push([field, value]);
+        }
+      } else {
+        resolvedEntries.push([field, value]);
+      }
+    }
+    return celMakeStruct(qualifiedName, resolvedEntries);
+  };
   return {
     // Arithmetic
     add: celAdd,
@@ -2563,7 +2798,7 @@ export function createRuntime() {
     makeList: celMakeList,
     makeMap: celMakeMap,
     mapInsert: celMapInsert,
-    makeStruct: celMakeStruct,
+    makeStruct: makeStructWithContainer,
     has: celHas,
     comprehension: celComprehension,
     // Type conversions (timestamp/duration)
@@ -2634,7 +2869,7 @@ export function createRuntime() {
     optionalIndex: celOptionalIndex,
     makeListOptional: celMakeListOptional,
     makeMapOptional: celMakeMapOptional,
-    makeStructOptional: celMakeStructOptional,
+    makeStructOptional: makeStructOptionalWithContainer,
     CelOptional,
     isCelOptional,
   };

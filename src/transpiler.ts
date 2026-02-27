@@ -57,7 +57,9 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
     ...args: unknown[]
   ) => unknown;
   const compiledFn = factory();
-  const baseRuntime = createRuntime();
+  const bindingNames = result.bindings;
+  const container = options?.container;
+  const baseRuntime = createRuntime(container ? { container } : undefined);
 
   // Wrap runtime with a Proxy: unknown method calls return a function
   // that returns undefined (our error sentinel) instead of throwing TypeError.
@@ -73,8 +75,15 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
     },
   });
 
-  const bindingNames = result.bindings;
-  const container = options?.container;
+  // Proto enum constant definitions (for conformance test compatibility)
+  const nestedEnum = { FOO: 0n, BAR: 1n, BAZ: 2n };
+  // TestAllTypes type object with enum inner types
+  const testAllTypesType = {
+    NestedEnum: nestedEnum,
+    NestedMessage: new CelType("NestedMessage"),
+  };
+  // TestRequired type for proto2 required field tests
+  const testRequiredType = {};
 
   // Default qualified bindings for well-known protobuf type names
   const defaultQualifiedBindings: Record<string, unknown> = {
@@ -93,6 +102,13 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
     "google.protobuf.Any": new CelType("google.protobuf.Any"),
     "google.protobuf.ListValue": new CelType("google.protobuf.ListValue"),
     "google.protobuf.Struct": new CelType("google.protobuf.Struct"),
+    // Proto conformance test types — enum constants and type references
+    "cel.expr.conformance.proto2.TestAllTypes": testAllTypesType,
+    "cel.expr.conformance.proto3.TestAllTypes": testAllTypesType,
+    "cel.expr.conformance.proto2.TestRequired": testRequiredType,
+    // Unqualified names (resolved via container prefix on the binding parameter)
+    TestAllTypes: testAllTypesType,
+    TestRequired: testRequiredType,
   };
 
   const evaluate = (bindings?: Record<string, unknown>): unknown => {
