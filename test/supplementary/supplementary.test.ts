@@ -1,9 +1,9 @@
 /**
  * Supplementary test suite harvested from cel-js-marcbachmann.
  *
- * All tests use the "negative skip" pattern: every test is expected to fail
- * (since the transpiler is not yet implemented). If a test unexpectedly passes,
- * we throw so it can be moved out of the expected-fail list.
+ * Tests are expected to PASS by default. Tests in the SKIP_NAMES set
+ * use the "negative skip" pattern: we expect them to fail. If a skipped
+ * test starts passing, vitest flags it so we can remove it from the list.
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../../src/transpiler.js";
@@ -15,6 +15,7 @@ import { functionTests } from "./data/functions.js";
 import { logicTests } from "./data/logic.js";
 import { macroTests } from "./data/macros.js";
 import { stringTests } from "./data/strings.js";
+import { SUPPLEMENTARY_SKIP_NAMES } from "./skip-list.js";
 import type { SupplementaryTest } from "./types.js";
 
 /** All supplementary tests, concatenated */
@@ -45,7 +46,7 @@ function groupByCategory(tests: SupplementaryTest[]): Map<string, SupplementaryT
 
 /**
  * Run a single supplementary test case.
- * Returns true if the test passed (matched expectations), false if it threw/failed.
+ * Throws if the test fails (result doesn't match expectations).
  */
 function runTest(test: SupplementaryTest): void {
   const fn = compile(test.expr);
@@ -131,21 +132,29 @@ describe("supplementary", () => {
   for (const [category, tests] of grouped) {
     describe(category, () => {
       for (const test of tests) {
-        // NEGATIVE SKIP: All tests are expected to fail right now.
-        // When the transpiler is implemented, tests that pass will
-        // throw "passed unexpectedly" to signal they should be promoted.
-        it(test.name, () => {
-          try {
+        const skipKey = `${category} > ${test.name}`;
+        const isSkipped = SUPPLEMENTARY_SKIP_NAMES.has(skipKey);
+
+        if (isSkipped) {
+          // NEGATIVE SKIP: test is expected to fail.
+          // If it starts passing, throw so we can remove it from the skip list.
+          it(test.name, () => {
+            try {
+              runTest(test);
+            } catch {
+              // Expected to fail - this is fine
+              return;
+            }
+            expect.unreachable(
+              `Test "${test.name}" passed unexpectedly! ` + `Expression: ${test.expr}`,
+            );
+          });
+        } else {
+          // Normal test: expected to pass
+          it(test.name, () => {
             runTest(test);
-          } catch {
-            // Expected to fail - this is fine
-            return;
-          }
-          // If we get here, the test passed unexpectedly
-          expect.unreachable(
-            `Test "${test.name}" passed unexpectedly! ` + `Expression: ${test.expr}`,
-          );
-        });
+          });
+        }
       }
     });
   }
