@@ -79,8 +79,8 @@ export const SKIP_PATHS: string[][] = [
   ["enums", "strong_proto3", "type_global"],
   ["enums", "strong_proto3", "type_nested"],
   ["enums", "strong_proto3", "field_type"],
-  ["wrappers"],
-  ["proto2_ext"],
+  // ["wrappers"],  -- enabled: wrapper types (BoolValue, Int32Value, etc.)
+  // ["proto2_ext"],  -- enabled: proto2 extension fields
 
   // Extensions
   // ["string_ext"],  -- enabling: string extension functions

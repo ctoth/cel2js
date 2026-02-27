@@ -329,7 +329,7 @@ const GLOBAL_FUNC_TO_RT: Record<string, string> = {
 };
 
 /** Known extension namespaces — calls like math.fn() route to _rt["math.fn"]() */
-const NAMESPACE_PREFIXES = new Set(["math", "base64", "optional"]);
+const NAMESPACE_PREFIXES = new Set(["math", "base64", "optional", "proto"]);
 
 /** Optional member methods — these get special routing to optionalXxx runtime methods */
 const OPTIONAL_MEMBER_METHODS = new Set([
@@ -506,6 +506,22 @@ function transformExpr(node: CelExpr, temps: TempAllocator, bindings: Set<string
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Flatten a Select chain into a dot-separated qualified name string.
+ *  e.g. cel.expr.conformance.proto2.int32_ext -> "cel.expr.conformance.proto2.int32_ext"
+ *  Returns undefined if the node is not a pure Select/Ident chain. */
+function flattenQualifiedName(node: CelExpr): string | undefined {
+  if (node.kind === "Ident") return node.name;
+  if (node.kind === "Select" && !node.testOnly) {
+    const prefix = flattenQualifiedName(node.operand);
+    if (prefix !== undefined) return `${prefix}.${node.field}`;
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Call transformations
 // ---------------------------------------------------------------------------
 
@@ -594,6 +610,24 @@ function transformCall(
 
     // Generate: ((varName) => bodyExpr)(initExpr)
     return callExpr(arrowFn([identifier(varName)], bodyExpr, true), [initExpr]);
+  }
+
+  // -- proto.hasExt / proto.getExt: flatten qualified name arg to string --
+  if (
+    target !== undefined &&
+    target.kind === "Ident" &&
+    target.name === "proto" &&
+    (fn === "hasExt" || fn === "getExt") &&
+    args.length === 2
+  ) {
+    const msgArg = transformExpr(at(args, 0), temps, bindings);
+    const extNameStr = flattenQualifiedName(at(args, 1));
+    if (extNameStr !== undefined) {
+      return rtCall(`proto.${fn}`, [msgArg, literal(extNameStr)]);
+    }
+    // Fallback: evaluate normally
+    const extArg = transformExpr(at(args, 1), temps, bindings);
+    return rtCall(`proto.${fn}`, [msgArg, extArg]);
   }
 
   // -- Namespace function call: math.fn(args) -> _rt["math.fn"](args) ---

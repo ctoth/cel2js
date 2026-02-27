@@ -1,4 +1,15 @@
 import {
+  int32_ext,
+  nested_enum_ext,
+  nested_ext,
+  Proto2ExtensionScopedMessage_int64_ext,
+  Proto2ExtensionScopedMessage_message_scoped_nested_ext,
+  Proto2ExtensionScopedMessage_message_scoped_repeated_test_all_types,
+  Proto2ExtensionScopedMessage_nested_enum_ext,
+  repeated_test_all_types,
+  test_all_types_ext,
+} from "@bufbuild/cel-spec/cel/expr/conformance/proto2/test_all_types_extensions_pb.js";
+import {
   TestAllTypes_NestedMessageSchema as Proto2NestedMessageSchema,
   TestAllTypesSchema as Proto2TestAllTypesSchema,
 } from "@bufbuild/cel-spec/cel/expr/conformance/proto2/test_all_types_pb.js";
@@ -8,8 +19,8 @@ import {
 } from "@bufbuild/cel-spec/cel/expr/conformance/proto3/test_all_types_pb.js";
 import type { ExprValue } from "@bufbuild/cel-spec/cel/expr/eval_pb.js";
 import type { Value } from "@bufbuild/cel-spec/cel/expr/value_pb.js";
-import type { DescField, DescMessage } from "@bufbuild/protobuf";
-import { fromBinary, isFieldSet } from "@bufbuild/protobuf";
+import type { DescField, DescMessage, GenExtension } from "@bufbuild/protobuf";
+import { fromBinary, getExtension, hasExtension, isFieldSet } from "@bufbuild/protobuf";
 import {
   AnySchema,
   BoolValueSchema,
@@ -29,7 +40,12 @@ import {
   UInt64ValueSchema,
   ValueSchema,
 } from "@bufbuild/protobuf/wkt";
-import { CelDuration, CelTimestamp, celMakeStruct } from "../../src/runtime/helpers.js";
+import {
+  CelDuration,
+  CelTimestamp,
+  celMakeStruct,
+  PROTO_EXTENSIONS,
+} from "../../src/runtime/helpers.js";
 import type { CelValue } from "../../src/runtime/types.js";
 import { CelType, CelUint } from "../../src/runtime/types.js";
 
@@ -43,6 +59,27 @@ const PROTO_SCHEMAS: Record<string, DescMessage> = {
   "type.googleapis.com/cel.expr.conformance.proto3.TestAllTypes": Proto3TestAllTypesSchema,
   "type.googleapis.com/cel.expr.conformance.proto3.TestAllTypes.NestedMessage":
     Proto3NestedMessageSchema,
+};
+
+/**
+ * Registry of proto2 extension field descriptors, keyed by their qualified typeName.
+ * Used to decode extension data from raw proto messages.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: extension descriptors have varied value types
+const PROTO2_EXTENSIONS: Record<string, GenExtension<any, any>> = {
+  "cel.expr.conformance.proto2.int32_ext": int32_ext,
+  "cel.expr.conformance.proto2.nested_ext": nested_ext,
+  "cel.expr.conformance.proto2.test_all_types_ext": test_all_types_ext,
+  "cel.expr.conformance.proto2.nested_enum_ext": nested_enum_ext,
+  "cel.expr.conformance.proto2.repeated_test_all_types": repeated_test_all_types,
+  "cel.expr.conformance.proto2.Proto2ExtensionScopedMessage.int64_ext":
+    Proto2ExtensionScopedMessage_int64_ext,
+  "cel.expr.conformance.proto2.Proto2ExtensionScopedMessage.message_scoped_nested_ext":
+    Proto2ExtensionScopedMessage_message_scoped_nested_ext,
+  "cel.expr.conformance.proto2.Proto2ExtensionScopedMessage.nested_enum_ext":
+    Proto2ExtensionScopedMessage_nested_enum_ext,
+  "cel.expr.conformance.proto2.Proto2ExtensionScopedMessage.message_scoped_repeated_test_all_types":
+    Proto2ExtensionScopedMessage_message_scoped_repeated_test_all_types,
 };
 
 // Proto scalar type constants (from protobuf spec)
@@ -294,7 +331,64 @@ function protoMessageToStruct(msg: Record<string, unknown>, schema: DescMessage)
     }
   }
 
-  return celMakeStruct(typeName, entries) as CelValue;
+  const result = celMakeStruct(typeName, entries) as CelValue;
+
+  // Decode proto2 extension fields from $unknown data and attach to struct
+  if (
+    result !== null &&
+    result !== undefined &&
+    typeof result === "object" &&
+    (msg as Record<string, unknown>).$unknown
+  ) {
+    const extMap = new Map<string, CelValue>();
+    for (const [extName, extDesc] of Object.entries(PROTO2_EXTENSIONS)) {
+      if (hasExtension(msg, extDesc)) {
+        const rawVal = getExtension(msg, extDesc);
+        const celVal = convertExtensionValue(extDesc, rawVal);
+        extMap.set(extName, celVal);
+      }
+    }
+    if (extMap.size > 0) {
+      (result as Record<symbol, unknown>)[PROTO_EXTENSIONS] = extMap;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Convert a decoded proto extension value to a CEL value based on the extension descriptor.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: extension descriptors have varied value types
+function convertExtensionValue(extDesc: GenExtension<any, any>, value: unknown): CelValue {
+  if (extDesc.fieldKind === "scalar") {
+    if (extDesc.scalar === SCALAR_INT32 || extDesc.scalar === SCALAR_INT64) {
+      return BigInt(value as number | bigint);
+    }
+    if (extDesc.scalar === SCALAR_UINT32 || extDesc.scalar === SCALAR_UINT64) {
+      return new CelUint(BigInt(value as number | bigint));
+    }
+    return value as CelValue;
+  }
+  if (extDesc.fieldKind === "enum") {
+    return BigInt(value as number);
+  }
+  if (extDesc.fieldKind === "message" && extDesc.message) {
+    if (value != null) {
+      return protoMessageToStruct(value as Record<string, unknown>, extDesc.message as DescMessage);
+    }
+    return null;
+  }
+  if (extDesc.fieldKind === "list" && extDesc.message) {
+    // Repeated message extension
+    const arr = value as unknown[];
+    return arr.map((elem) =>
+      elem != null
+        ? protoMessageToStruct(elem as Record<string, unknown>, extDesc.message as DescMessage)
+        : null,
+    );
+  }
+  return value as CelValue;
 }
 
 /**

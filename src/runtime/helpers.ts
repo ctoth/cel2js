@@ -1672,8 +1672,74 @@ const WRAPPER_DEFAULTS: Record<string, CelValue> = {
   "google.protobuf.UInt64Value": new CelUint(0n),
 };
 
+/**
+ * Convert a CEL value to a google.protobuf.Value JSON-compatible type.
+ * Used when storing values into google.protobuf.Value fields (e.g. single_value).
+ *
+ * JSON Value types: null, bool, number (double), string, list, struct (Map).
+ * Non-JSON-native types (int, uint, bytes, duration, timestamp, etc.) are converted.
+ */
+function celToJsonValue(v: CelValue): CelValue {
+  if (v === null || isBool(v) || isDouble(v) || isStr(v)) return v;
+  if (isList(v)) return v.map((e) => celToJsonValue(e));
+  if (isMap(v)) {
+    const m = new Map<CelValue, CelValue>();
+    for (const [k, val] of v) {
+      m.set(k, celToJsonValue(val));
+    }
+    return m;
+  }
+  // BigInt (CEL int) -> number if safe, else string
+  if (isInt(v)) {
+    if (v >= -9007199254740991n && v <= 9007199254740991n) {
+      return Number(v);
+    }
+    return v.toString();
+  }
+  // CelUint -> number if safe, else string
+  if (isCelUint(v)) {
+    if (v.value <= 9007199254740991n) {
+      return Number(v.value);
+    }
+    return v.value.toString();
+  }
+  // bytes -> base64 string
+  if (isBytes(v)) {
+    return celBase64Encode(v) ?? "";
+  }
+  // Duration -> string
+  if (isCelDuration(v)) {
+    return durationToString(v);
+  }
+  // Timestamp -> string
+  if (isCelTimestamp(v)) {
+    return timestampToString(v);
+  }
+  // Struct types with special JSON conversions
+  if (isStruct(v)) {
+    if (v.__type === "google.protobuf.FieldMask") {
+      const paths = v.paths;
+      if (Array.isArray(paths)) return (paths as string[]).join(",");
+      return "";
+    }
+    if (v.__type === "google.protobuf.Empty") {
+      return new Map<CelValue, CelValue>();
+    }
+  }
+  return v;
+}
+
+/** Check if a field is a google.protobuf.Value type field */
+function isValueFieldName(field: string): boolean {
+  return field === "single_value";
+}
+
 /** Symbol to store set of explicitly-set field names on struct objects */
 const STRUCT_FIELDS = Symbol.for("cel.struct.fields");
+
+/** Symbol to store pre-decoded proto extension fields on struct objects.
+ *  Maps extension qualified name (string) to CEL value. */
+export const PROTO_EXTENSIONS = Symbol.for("cel.proto.extensions");
 
 /** Null-setting a scalar/repeated/map field on a proto struct is an error */
 const NULL_ERROR_FIELD_PATTERNS = [
@@ -1923,8 +1989,11 @@ export function celMakeStruct(_name: string, entries: [string, CelValue][]): Cel
   // Track which fields were explicitly set
   const fields = new Set<string>();
   for (const [field, value] of entries) {
-    // Proto float fields are float32; truncate to float32 precision
-    if (
+    // google.protobuf.Value fields: convert CEL values to JSON-compatible types
+    if (isValueFieldName(field)) {
+      obj[field] = celToJsonValue(value);
+    } else if (
+      // Proto float fields are float32; truncate to float32 precision
       (isFloat32FieldName(field) || isFloat32WrapperFieldName(field)) &&
       typeof value === "number"
     ) {
@@ -2838,6 +2907,30 @@ export function celMakeStructOptional(
   return celMakeStruct(_name, resolvedEntries);
 }
 
+// ── Proto Extensions ──────────────────────────────────────────────────────
+
+/** proto.hasExt(msg, extName) — check if a proto2 extension field is set.
+ *  Extensions are stored as a Map<string, CelValue> under PROTO_EXTENSIONS symbol. */
+function celProtoHasExt(msg: unknown, extName: unknown): boolean | undefined {
+  if (!isStr(extName) || !isStruct(msg)) return undefined;
+  const extensions = (msg as Record<symbol, unknown>)[PROTO_EXTENSIONS] as
+    | Map<string, CelValue>
+    | undefined;
+  if (!extensions) return false;
+  return extensions.has(extName);
+}
+
+/** proto.getExt(msg, extName) — get a proto2 extension field value.
+ *  Returns the extension value, or the default for the field if not set. */
+function celProtoGetExt(msg: unknown, extName: unknown): CelValue | undefined {
+  if (!isStr(extName) || !isStruct(msg)) return undefined;
+  const extensions = (msg as Record<symbol, unknown>)[PROTO_EXTENSIONS] as
+    | Map<string, CelValue>
+    | undefined;
+  if (!extensions || !extensions.has(extName)) return undefined;
+  return extensions.get(extName) as CelValue;
+}
+
 // ── createRuntime ──────────────────────────────────────────────────────────
 
 export interface RuntimeOptions {
@@ -3004,5 +3097,8 @@ export function createRuntime(options?: RuntimeOptions) {
     makeStructOptional: makeStructOptionalWithContainer,
     CelOptional,
     isCelOptional,
+    // Proto extensions
+    "proto.hasExt": celProtoHasExt,
+    "proto.getExt": celProtoGetExt,
   };
 }
