@@ -1,4 +1,4 @@
-import { CelUint, isCelUint, CelType, isCelType } from "../../src/runtime/types.js";
+import { isCelType, isCelUint } from "../../src/runtime/types.js";
 
 /**
  * Deep equality comparison for CEL values.

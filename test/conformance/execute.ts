@@ -1,7 +1,7 @@
 import type { IncrementalTest } from "@bufbuild/cel-spec/testdata/tests.js";
 import { compile } from "../../src/transpiler.js";
-import { protoValueToJS, protoBindingsToJS } from "./values.js";
 import { celDeepEqual } from "./compare.js";
+import { protoBindingsToJS, protoValueToJS } from "./values.js";
 
 /**
  * Execute a single conformance test case.
@@ -70,9 +70,7 @@ export function runSimpleTest(test: IncrementalTest): void {
       break;
     }
     default:
-      throw new Error(
-        `Unsupported result matcher: ${(resultMatcher as { case: string }).case}`,
-      );
+      throw new Error(`Unsupported result matcher: ${(resultMatcher as { case: string }).case}`);
   }
 }
 

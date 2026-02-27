@@ -13,17 +13,23 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "bench": "vitest bench",
-    "bench:run": "vitest bench --run"
+    "bench:run": "vitest bench --run",
+    "precommit": "tsc --noEmit && biome check .",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
   },
   "dependencies": {
     "astring": "^1.9.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.4",
     "@bufbuild/cel": "^0.4.0",
     "@bufbuild/cel-spec": "^0.4.0",
     "@bufbuild/protobuf": "^2.6.2",
     "@marcbachmann/cel-js": "^7.5.1",
     "cel-js": "^0.8.2",
+    "lefthook": "^2.1.1",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },

@@ -12,17 +12,13 @@ describe("native baseline", () => {
   for (const tc of BENCHMARK_CASES) {
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     const fn = new Function(...tc.nativeArgs, tc.nativeJs);
-    const args = tc.nativeArgs.map(
-      (name) => tc.context[name as keyof typeof tc.context],
-    );
+    const args = tc.nativeArgs.map((name) => tc.context[name as keyof typeof tc.context]);
 
     // Verify correctness before benchmarking
     const result = fn(...args);
     if (typeof tc.expected === "boolean" || typeof tc.expected === "number") {
       if (result !== tc.expected) {
-        throw new Error(
-          `native ${tc.name}: expected ${tc.expected}, got ${result}`,
-        );
+        throw new Error(`native ${tc.name}: expected ${tc.expected}, got ${result}`);
       }
     }
 

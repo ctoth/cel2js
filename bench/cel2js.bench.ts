@@ -7,8 +7,8 @@
  * and the native baseline.
  */
 import { bench, describe } from "vitest";
-import { BENCHMARK_CASES } from "./shared.js";
 import { compile } from "../src/transpiler.js";
+import { BENCHMARK_CASES } from "./shared.js";
 
 describe("cel2js", () => {
   for (const tc of BENCHMARK_CASES) {

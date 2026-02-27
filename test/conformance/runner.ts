@@ -1,8 +1,5 @@
+import type { IncrementalTest, IncrementalTestSuite } from "@bufbuild/cel-spec/testdata/tests.js";
 import { describe, it } from "vitest";
-import type {
-  IncrementalTest,
-  IncrementalTestSuite,
-} from "@bufbuild/cel-spec/testdata/tests.js";
 
 /**
  * Recursively walk the test suite tree, creating vitest describe/it blocks.

@@ -1,0 +1,202 @@
+import type { SupplementaryTest } from "../types.js";
+
+const C = "functions";
+
+export const functionTests: SupplementaryTest[] = [
+  // === type() function ===
+  { name: "type int == int", expr: "int == int", expected: true, category: C },
+  { name: "type(1) == int", expr: "type(1) == int", expected: true, category: C },
+  { name: "type double == double", expr: "double == double", expected: true, category: C },
+  { name: "type(1.0) == double", expr: "type(1.0) == double", expected: true, category: C },
+  { name: "type string == string", expr: "string == string", expected: true, category: C },
+  { name: "type('s') == string", expr: "type('string') == string", expected: true, category: C },
+  { name: "type bool == bool", expr: "bool == bool", expected: true, category: C },
+  { name: "type(true) == bool", expr: "type(true) == bool", expected: true, category: C },
+  { name: "type(false) == bool", expr: "type(false) == bool", expected: true, category: C },
+  { name: "type null == null_type", expr: "null_type == null_type", expected: true, category: C },
+  { name: "type(null) == null_type", expr: "type(null) == null_type", expected: true, category: C },
+  { name: "type bytes == bytes", expr: "bytes == bytes", expected: true, category: C },
+  { name: "type list == list", expr: "list == list", expected: true, category: C },
+  { name: "type([]) == list", expr: "type([]) == list", expected: true, category: C },
+  { name: "type map == map", expr: "map == map", expected: true, category: C },
+  { name: "type({}) == map", expr: "type({}) == map", expected: true, category: C },
+  { name: "type type == type", expr: "type == type", expected: true, category: C },
+  { name: "type(string) == type", expr: "type(string) == type", expected: true, category: C },
+  { name: "type(1) != type", expr: "type(1) != type", expected: true, category: C },
+  { name: "type(1.0) != type", expr: "type(1.0) != type", expected: true, category: C },
+  { name: "reject type > type", expr: "int > int", expectError: true, category: C },
+  { name: "reject type + type", expr: "int + int", expectError: true, category: C },
+
+  // === int() conversion function ===
+  { name: "int(42) identity", expr: "int(42)", expected: 42n, category: C },
+  { name: "int(3.14) truncate", expr: "int(3.14)", expected: 3n, category: C },
+  { name: "int('-5') from string", expr: "int('-5')", expected: -5n, category: C },
+  { name: "int('0') from string", expr: "int('0')", expected: 0n, category: C },
+  {
+    name: "int max from string",
+    expr: "int('9223372036854775807')",
+    expected: 9223372036854775807n,
+    category: C,
+  },
+  { name: "reject int(inf) overflow", expr: "int(double('inf'))", expectError: true, category: C },
+  {
+    name: "reject int(-inf) overflow",
+    expr: "int(double('-inf'))",
+    expectError: true,
+    category: C,
+  },
+  { name: "reject int(nan) overflow", expr: "int(double('nan'))", expectError: true, category: C },
+  {
+    name: "reject int overflow string",
+    expr: "int('9223372036854775808')",
+    expectError: true,
+    category: C,
+  },
+  { name: "reject int hex string", expr: "int('0x01')", expectError: true, category: C },
+  { name: "reject int sci notation", expr: "int('1e10')", expectError: true, category: C },
+  { name: "reject int float string", expr: "int('3.1')", expectError: true, category: C },
+
+  // === double() conversion function ===
+  { name: "double(42) from int", expr: "double(42)", expected: 42, category: C },
+  { name: "double(3.14) identity", expr: "double(3.14)", expected: 3.14, category: C },
+  { name: "double(1u) from uint", expr: "double(1u)", expected: 1, category: C },
+  { name: 'double("42") from string', expr: 'double("42")', expected: 42, category: C },
+  { name: 'double("3.14") from string', expr: 'double("3.14")', expected: 3.14, category: C },
+  { name: 'double("1e5") from string', expr: 'double("1e5")', expected: 100000, category: C },
+  {
+    name: 'double("Infinity") pos',
+    expr: 'double("Infinity")',
+    expected: Number.POSITIVE_INFINITY,
+    category: C,
+  },
+  {
+    name: 'double("-Infinity") neg',
+    expr: 'double("-Infinity")',
+    expected: Number.NEGATIVE_INFINITY,
+    category: C,
+  },
+  { name: 'reject double("")', expr: 'double("")', expectError: true, category: C },
+  { name: 'reject double("abc")', expr: 'double("abc")', expectError: true, category: C },
+  { name: 'reject double(" 1")', expr: 'double(" 1")', expectError: true, category: C },
+  { name: "reject double(true)", expr: "double(true)", expectError: true, category: C },
+  { name: "reject double(null)", expr: "double(null)", expectError: true, category: C },
+  { name: "reject double()", expr: "double()", expectError: true, category: C },
+  { name: "reject double(1,2)", expr: "double(1, 2)", expectError: true, category: C },
+  { name: "double in expression", expr: 'double("5") + double("3")', expected: 8, category: C },
+  { name: "double * double", expr: 'double("3.14") * 2.0', expected: 6.28, category: C },
+
+  // === bool() conversion function ===
+  { name: "bool(true) identity", expr: "bool(true)", expected: true, category: C },
+  { name: "bool(false) identity", expr: "bool(false)", expected: false, category: C },
+  { name: 'bool("true")', expr: 'bool("true")', expected: true, category: C },
+  { name: 'bool("TRUE")', expr: 'bool("TRUE")', expected: true, category: C },
+  { name: 'bool("True")', expr: 'bool("True")', expected: true, category: C },
+  { name: 'bool("t")', expr: 'bool("t")', expected: true, category: C },
+  { name: 'bool("1")', expr: 'bool("1")', expected: true, category: C },
+  { name: 'bool("false")', expr: 'bool("false")', expected: false, category: C },
+  { name: 'bool("FALSE")', expr: 'bool("FALSE")', expected: false, category: C },
+  { name: 'bool("False")', expr: 'bool("False")', expected: false, category: C },
+  { name: 'bool("f")', expr: 'bool("f")', expected: false, category: C },
+  { name: 'bool("0")', expr: 'bool("0")', expected: false, category: C },
+  { name: 'reject bool("T")', expr: 'bool("T")', expectError: true, category: C },
+  { name: 'reject bool("yes")', expr: 'bool("yes")', expectError: true, category: C },
+  { name: 'reject bool("")', expr: 'bool("")', expectError: true, category: C },
+  { name: "reject bool(1)", expr: "bool(1)", expectError: true, category: C },
+  { name: "reject bool(null)", expr: "bool(null)", expectError: true, category: C },
+  { name: "reject bool([])", expr: "bool([])", expectError: true, category: C },
+  { name: "bool in ternary true", expr: 'bool("true") ? 1 : 0', expected: 1n, category: C },
+  { name: "bool in ternary false", expr: 'bool("false") ? 1 : 0', expected: 0n, category: C },
+  { name: "bool AND", expr: 'bool("true") && bool("true")', expected: true, category: C },
+  { name: "bool OR", expr: 'bool("false") || bool("true")', expected: true, category: C },
+  { name: "bool NOT", expr: '!bool("true")', expected: false, category: C },
+  { name: "bool concat true", expr: 'bool("tr" + "ue")', expected: true, category: C },
+
+  // === string.endsWith() ===
+  {
+    name: "endsWith method true",
+    expr: '"hello world".endsWith("world")',
+    expected: true,
+    category: C,
+  },
+  {
+    name: "endsWith method false",
+    expr: '"hello world".endsWith("hello")',
+    expected: false,
+    category: C,
+  },
+
+  // === Timestamp functions ===
+  {
+    name: "timestamp getFullYear",
+    expr: 'timestamp("2023-12-25T12:00:00Z").getFullYear()',
+    expected: 2023n,
+    category: C,
+  },
+  {
+    name: "timestamp getMonth",
+    expr: 'timestamp("2023-12-25T12:00:00Z").getMonth()',
+    expected: 11n,
+    category: C,
+  },
+  {
+    name: "timestamp getDayOfWeek",
+    expr: 'timestamp("2023-12-25T12:00:00Z").getDayOfWeek()',
+    expected: 1n,
+    category: C,
+  },
+  {
+    name: "timestamp == true",
+    expr: 'timestamp("2024-01-01T00:00:00Z") == timestamp("2024-01-01T00:00:00Z")',
+    expected: true,
+    category: C,
+  },
+  {
+    name: "timestamp == false",
+    expr: 'timestamp("2024-01-01T00:00:00Z") == timestamp("2024-01-02T00:00:00Z")',
+    expected: false,
+    category: C,
+  },
+  {
+    name: "reject too-large timestamp",
+    expr: 'timestamp("10000-01-01T00:00:00Z")',
+    expectError: true,
+    category: C,
+  },
+
+  // === Duration functions ===
+  {
+    name: "duration equality true",
+    expr: 'duration("1h") == duration("1h")',
+    expected: true,
+    category: C,
+  },
+  {
+    name: "duration equality false",
+    expr: 'duration("1h") == duration("2h")',
+    expected: false,
+    category: C,
+  },
+  {
+    name: "duration != true",
+    expr: 'duration("1h") != duration("2h")',
+    expected: true,
+    category: C,
+  },
+  { name: "duration < true", expr: 'duration("1h") < duration("2h")', expected: true, category: C },
+  { name: "duration > true", expr: 'duration("2h") > duration("1h")', expected: true, category: C },
+  {
+    name: "duration <= equal",
+    expr: 'duration("1h") <= duration("1h")',
+    expected: true,
+    category: C,
+  },
+  {
+    name: "duration >= equal",
+    expr: 'duration("1h") >= duration("1h")',
+    expected: true,
+    category: C,
+  },
+
+  // === bytes() function ===
+  { name: "bytes from string size", expr: 'size(bytes("hello"))', expected: 5n, category: C },
+];

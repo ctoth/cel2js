@@ -18,8 +18,6 @@ export function expectThrows(fn: () => unknown, pattern?: RegExp): void {
     throw new Error("Expected function to throw, but it did not");
   }
   if (pattern && error instanceof Error && !pattern.test(error.message)) {
-    throw new Error(
-      `Expected error matching ${pattern} but got: ${error.message}`,
-    );
+    throw new Error(`Expected error matching ${pattern} but got: ${error.message}`);
   }
 }

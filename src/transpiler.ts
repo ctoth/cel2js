@@ -10,9 +10,6 @@ export interface CompileOptions {
   disableMacros?: boolean;
 }
 
-export function compile(
-  cel: string,
-  _options?: CompileOptions,
-): CompileResult {
+export function compile(cel: string, _options?: CompileOptions): CompileResult {
   throw new Error(`cel2js: transpiler not implemented (expression: ${cel})`);
 }

@@ -8,14 +8,11 @@
  * Both "cold" (parse+eval) and "hot" (pre-parsed eval) paths are measured.
  */
 import { bench, describe } from "vitest";
-import { BENCHMARK_CASES, type BenchmarkCase } from "./shared.js";
+import { BENCHMARK_CASES } from "./shared.js";
 
 // ─── @marcbachmann/cel-js ───────────────────────────────────────────
 
-import {
-  evaluate as marcEvaluate,
-  parse as marcParse,
-} from "@marcbachmann/cel-js";
+import { evaluate as marcEvaluate, parse as marcParse } from "@marcbachmann/cel-js";
 
 describe("@marcbachmann/cel-js", () => {
   for (const tc of BENCHMARK_CASES) {
@@ -55,25 +52,28 @@ describe("@marcbachmann/cel-js", () => {
 // ─── @bufbuild/cel ──────────────────────────────────────────────────
 
 import {
-  run as bufRun,
   parse as bufParse,
   plan as bufPlan,
+  run as bufRun,
+  type CelInput,
   celEnv,
 } from "@bufbuild/cel";
 
 describe("@bufbuild/cel", () => {
   for (const tc of BENCHMARK_CASES) {
+    const bufCtx = tc.contextBigInt as Record<string, CelInput>;
+
     // Cold: run() does parse + plan + eval every time
     let coldWorks = true;
     try {
-      bufRun(tc.cel, tc.contextBigInt);
+      bufRun(tc.cel, bufCtx);
     } catch {
       coldWorks = false;
     }
 
     if (coldWorks) {
       bench(`cold ${tc.name}: ${tc.cel}`, () => {
-        bufRun(tc.cel, tc.contextBigInt);
+        bufRun(tc.cel, bufCtx);
       });
     }
 
@@ -84,7 +84,7 @@ describe("@bufbuild/cel", () => {
       const env = celEnv();
       bufFn = bufPlan(env, ast);
       // Verify it works
-      bufFn(tc.contextBigInt);
+      bufFn(bufCtx);
     } catch {
       bufFn = null;
     }
@@ -92,7 +92,7 @@ describe("@bufbuild/cel", () => {
     if (bufFn) {
       const fn = bufFn;
       bench(`hot ${tc.name}: ${tc.cel}`, () => {
-        fn(tc.contextBigInt);
+        fn(bufCtx);
       });
     }
   }
@@ -122,7 +122,7 @@ describe("cel-js", () => {
     let cst: unknown = null;
     try {
       const parsed = celjsParse(tc.cel);
-      if (parsed.cst) {
+      if (parsed.isSuccess) {
         // Verify evaluation with CST works
         celjsEvaluate(parsed.cst, tc.context);
         cst = parsed.cst;

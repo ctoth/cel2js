@@ -1,6 +1,6 @@
-import type { Value } from "@bufbuild/cel-spec/cel/expr/value_pb.js";
 import type { ExprValue } from "@bufbuild/cel-spec/cel/expr/eval_pb.js";
-import { CelUint, CelType } from "../../src/runtime/types.js";
+import type { Value } from "@bufbuild/cel-spec/cel/expr/value_pb.js";
+import { CelType, CelUint } from "../../src/runtime/types.js";
 
 /**
  * Convert a proto Value to a JavaScript value suitable for comparison.
@@ -55,15 +55,11 @@ export function protoValueToJS(value: Value): unknown {
     case "enumValue":
       return BigInt(value.kind.value.value);
     case "objectValue":
-      throw new Error(
-        `objectValue (proto Any) not supported yet: ${value.kind.value.typeUrl}`,
-      );
+      throw new Error(`objectValue (proto Any) not supported yet: ${value.kind.value.typeUrl}`);
     case undefined:
       throw new Error("Value has undefined kind");
     default:
-      throw new Error(
-        `Unsupported value kind: ${(value.kind as { case: string }).case}`,
-      );
+      throw new Error(`Unsupported value kind: ${(value.kind as { case: string }).case}`);
   }
 }
 
@@ -71,15 +67,11 @@ export function protoValueToJS(value: Value): unknown {
  * Convert proto ExprValue bindings map to a plain JS bindings object.
  * Only "value"-case bindings are supported (matching cel-es behavior).
  */
-export function protoBindingsToJS(
-  bindings: { [key: string]: ExprValue },
-): Record<string, unknown> {
+export function protoBindingsToJS(bindings: { [key: string]: ExprValue }): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, exprValue] of Object.entries(bindings)) {
     if (exprValue.kind.case !== "value") {
-      throw new Error(
-        `Unsupported binding kind for "${key}": ${exprValue.kind.case}`,
-      );
+      throw new Error(`Unsupported binding kind for "${key}": ${exprValue.kind.case}`);
     }
     if (!exprValue.kind.value) {
       throw new Error(`Binding "${key}" has value case but no value`);
