@@ -2,6 +2,7 @@ import { generateJs } from "./codegen/codegen.js";
 import { transform } from "./codegen/transformer.js";
 import { parse } from "./parser/index.js";
 import { createRuntime } from "./runtime/helpers.js";
+import { CelType } from "./runtime/types.js";
 
 /** Error thrown when CEL evaluation fails (e.g. division by zero, type mismatch) */
 export class CelError extends Error {
@@ -21,6 +22,8 @@ export interface CompileResult {
 export interface CompileOptions {
   /** Disable macro expansion */
   disableMacros?: boolean;
+  /** CEL container (namespace) for identifier resolution */
+  container?: string;
 }
 
 /**
@@ -32,7 +35,7 @@ export interface CompileOptions {
  * 3. generateJs(estree)  -> JS source string
  * 4. new Function(...)   -> executable function
  */
-export function compile(cel: string, _options?: CompileOptions): CompileResult {
+export function compile(cel: string, options?: CompileOptions): CompileResult {
   // Step 1: Parse CEL source into AST
   const ast = parse(cel);
 
@@ -71,10 +74,40 @@ export function compile(cel: string, _options?: CompileOptions): CompileResult {
   });
 
   const bindingNames = result.bindings;
+  const container = options?.container;
+
+  // Default qualified bindings for well-known protobuf type names
+  const defaultQualifiedBindings: Record<string, unknown> = {
+    "google.protobuf.Timestamp": new CelType("google.protobuf.Timestamp"),
+    "google.protobuf.Duration": new CelType("google.protobuf.Duration"),
+    "google.protobuf.BoolValue": new CelType("google.protobuf.BoolValue"),
+    "google.protobuf.BytesValue": new CelType("google.protobuf.BytesValue"),
+    "google.protobuf.DoubleValue": new CelType("google.protobuf.DoubleValue"),
+    "google.protobuf.FloatValue": new CelType("google.protobuf.FloatValue"),
+    "google.protobuf.Int32Value": new CelType("google.protobuf.Int32Value"),
+    "google.protobuf.Int64Value": new CelType("google.protobuf.Int64Value"),
+    "google.protobuf.StringValue": new CelType("google.protobuf.StringValue"),
+    "google.protobuf.UInt32Value": new CelType("google.protobuf.UInt32Value"),
+    "google.protobuf.UInt64Value": new CelType("google.protobuf.UInt64Value"),
+    "google.protobuf.Value": new CelType("google.protobuf.Value"),
+    "google.protobuf.Any": new CelType("google.protobuf.Any"),
+    "google.protobuf.ListValue": new CelType("google.protobuf.ListValue"),
+    "google.protobuf.Struct": new CelType("google.protobuf.Struct"),
+  };
 
   const evaluate = (bindings?: Record<string, unknown>): unknown => {
-    const args: unknown[] = [runtime];
+    const qualifiedBindings = { ...defaultQualifiedBindings, ...bindings };
+    const args: unknown[] = [runtime, qualifiedBindings];
     for (const name of bindingNames) {
+      // Container resolution: if container is "x" and name is "y",
+      // try "x.y" first in bindings (CEL namespace semantics).
+      if (container && bindings) {
+        const containerKey = `${container}.${name}`;
+        if (containerKey in bindings) {
+          args.push(bindings[containerKey]);
+          continue;
+        }
+      }
       args.push(bindings?.[name]);
     }
     const result = compiledFn(...args);

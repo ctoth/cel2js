@@ -11,10 +11,13 @@ import { protoBindingsToJS, protoValueToJS } from "./values.js";
  * 3. Evaluate and compare based on the result matcher type
  */
 export function runSimpleTest(test: IncrementalTest): void {
-  const { expr, bindings, resultMatcher, disableMacros } = test.original;
+  const { expr, bindings, resultMatcher, disableMacros, container } = test.original;
 
   // Transpile CEL to JS
-  const compiled = compile(expr, { disableMacros: disableMacros || undefined });
+  const compiled = compile(expr, {
+    disableMacros: disableMacros || undefined,
+    container: container || undefined,
+  });
 
   // Convert bindings from proto to JS
   const jsBindings = protoBindingsToJS(bindings);

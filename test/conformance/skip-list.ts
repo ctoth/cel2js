@@ -35,11 +35,16 @@ export const SKIP_PATHS: string[][] = [
   // Skip: proto objectValue (Any) not supported in test infra
   ["parse", "struct_field_names"],
   // ["plumbing"],  -- enabled: minimal programs, eval results, check inputs
-  ["namespace"],
+  // ["namespace"],  -- enabled: namespace resolution
   ["type_deductions"],
   // ["unknowns"],  -- empty suite (0 tests, 0 sub-suites), skipped by runner
-  ["fields"],
-  ["timestamps"],
+  // ["fields"],  -- enabled: field selection, map fields, has(), qualified identifiers
+  // Skip: float/null map keys and duplicate key detection require runtime makeMap changes
+  ["fields", "qualified_identifier_resolution", "map_key_float"],
+  ["fields", "qualified_identifier_resolution", "map_key_null"],
+  ["fields", "qualified_identifier_resolution", "map_value_repeat_key"],
+  ["fields", "qualified_identifier_resolution", "map_value_repeat_key_heterogeneous"],
+  // ["timestamps"],  -- enabled: timestamp and duration operations
 
   // Macros
   // ["macros"],  -- enabled: macro operations

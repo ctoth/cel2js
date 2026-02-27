@@ -101,7 +101,7 @@ export function transform(celAst: CelExpr): TransformResult {
   const prog = program([
     exprStatement(
       arrowFn(
-        [identifier("_rt"), ...bindings.map((b) => identifier(b))],
+        [identifier("_rt"), identifier("_qb"), ...bindings.map((b) => identifier(b))],
         blockStatement(body),
         false, // block body, not expression
       ),
@@ -136,6 +136,149 @@ function at<T>(arr: readonly T[], i: number): T {
   const v = arr[i];
   if (v === undefined) throw new Error(`Expected element at index ${i}`);
   return v;
+}
+
+/**
+ * Collect a chain of Select nodes from an Ident root.
+ * For `Select(Select(Ident("a"), "b"), "c")` returns `["a", "b", "c"]`.
+ * Returns undefined if the chain does not bottom out at an Ident.
+ */
+function collectSelectChain(node: CelExpr): string[] | undefined {
+  if (node.kind === "Ident") return [node.name];
+  if (node.kind === "Select" && !node.testOnly) {
+    const parent = collectSelectChain(node.operand);
+    if (parent !== undefined) return [...parent, node.field];
+  }
+  return undefined;
+}
+
+/**
+ * Build an ESTree expression for qualified identifier resolution.
+ * Tries longest prefix first from the `_b` (bindings) parameter.
+ *
+ * For segments ["a", "b", "c"], generates:
+ *   "a.b.c" in _b ? _b["a.b.c"] :
+ *   "a.b" in _b ? _rt.select(_b["a.b"], "c") :
+ *   _rt.select(_rt.select(a, "b"), "c")
+ *
+ * The final fallback uses the simple binding parameter `a` (looked up normally).
+ */
+function buildQualifiedResolution(
+  segments: string[],
+  _temps: TempAllocator,
+  bindings: Set<string>,
+): Expression {
+  const _b = identifier("_qb");
+
+  // Build from longest prefix to shortest
+  // Longest: all segments joined -> direct lookup from _b
+  // Shortest: first segment as simple binding, rest as selects
+  const levels: { prefix: string; remaining: string[] }[] = [];
+  for (let i = segments.length; i >= 1; i--) {
+    levels.push({
+      prefix: segments.slice(0, i).join("."),
+      remaining: segments.slice(i),
+    });
+  }
+
+  // Build the fallback (shortest prefix = simple binding)
+  const rootName = segments[0] as string;
+  // Don't add the root name to bindings if a qualified name covers it,
+  // because the root may not exist as a standalone binding.
+  // We still need the root as a parameter for the fallback case.
+  bindings.add(rootName);
+
+  let fallback: Expression = identifier(rootName);
+  for (let i = 1; i < segments.length; i++) {
+    fallback = rtCall("select", [fallback, literal(segments[i] as string)]);
+  }
+
+  // Build conditional chain from shortest prefix up to longest.
+  // We iterate from shortest to longest so the longest ends up as the
+  // outermost test (checked first at runtime), matching CEL's
+  // longest-prefix-wins semantics.
+  let result: Expression = fallback;
+  for (let i = levels.length - 2; i >= 0; i--) {
+    const level = levels[i] as { prefix: string; remaining: string[] };
+    const key = level.prefix;
+    const lookupExpr: Expression = memberExpr(_b, literal(key), true);
+
+    // Apply remaining selects
+    let selected: Expression = lookupExpr;
+    for (const field of level.remaining) {
+      selected = rtCall("select", [selected, literal(field)]);
+    }
+
+    // "key" in _b ? _b["key"] (+ selects) : <next>
+    result = conditional(binaryExpr("in", literal(key), _b), selected, result);
+  }
+
+  return result;
+}
+
+/**
+ * Build an ESTree expression for qualified has() resolution.
+ * Like buildQualifiedResolution but for has() on qualified paths.
+ *
+ * For segments ["a", "b", "c"] with testOnly (has), generates:
+ *   "a.b.c" in _b ? true :
+ *   "a.b" in _b ? _rt.has(_b["a.b"], "c") :
+ *   _rt.has(_rt.select(a, "b"), "c")
+ */
+function buildQualifiedHas(
+  segments: string[],
+  field: string,
+  _temps: TempAllocator,
+  bindings: Set<string>,
+): Expression {
+  const _b = identifier("_qb");
+  const fullPath = [...segments, field];
+
+  const levels: { prefix: string; remaining: string[] }[] = [];
+  for (let i = fullPath.length; i >= 1; i--) {
+    levels.push({
+      prefix: fullPath.slice(0, i).join("."),
+      remaining: fullPath.slice(i),
+    });
+  }
+
+  // Fallback: root as simple binding, then selects, then has
+  const rootName = segments[0] as string;
+  bindings.add(rootName);
+
+  let fallbackBase: Expression = identifier(rootName);
+  for (let i = 1; i < segments.length; i++) {
+    fallbackBase = rtCall("select", [fallbackBase, literal(segments[i] as string)]);
+  }
+  const fallback: Expression = rtCall("has", [fallbackBase, literal(field)]);
+
+  // Build from shortest to longest so the longest prefix is the outermost
+  // test (checked first at runtime), matching CEL longest-prefix-wins.
+  let result: Expression = fallback;
+  for (let i = levels.length - 2; i >= 0; i--) {
+    const level = levels[i] as { prefix: string; remaining: string[] };
+    const key = level.prefix;
+
+    if (level.remaining.length === 0) {
+      // Entire path is in _b -> has = true (key exists in bindings)
+      result = conditional(binaryExpr("in", literal(key), _b), literal(true), result);
+    } else {
+      // Partial path in _b, remaining fields need has/select
+      const lookupExpr: Expression = memberExpr(_b, literal(key), true);
+      const remainingFields = level.remaining;
+      let base: Expression = lookupExpr;
+      for (let j = 0; j < remainingFields.length - 1; j++) {
+        base = rtCall("select", [base, literal(remainingFields[j] as string)]);
+      }
+      const hasExpr = rtCall("has", [
+        base,
+        literal(remainingFields[remainingFields.length - 1] as string),
+      ]);
+      result = conditional(binaryExpr("in", literal(key), _b), hasExpr, result);
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -230,6 +373,17 @@ function transformExpr(node: CelExpr, temps: TempAllocator, bindings: Set<string
     // -- Select ---------------------------------------------------------
 
     case "Select": {
+      // Check for qualified identifier chain: a.b.c -> Select(Select(Ident("a"), "b"), "c")
+      const chain = collectSelectChain(node);
+      if (chain !== undefined && chain.length > 1) {
+        if (node.testOnly) {
+          // has() on a qualified chain
+          const parentChain = chain.slice(0, -1);
+          return buildQualifiedHas(parentChain, chain[chain.length - 1] as string, temps, bindings);
+        }
+        return buildQualifiedResolution(chain, temps, bindings);
+      }
+
       if (node.testOnly) {
         // has() macro: check if field is defined
         const operand = transformExpr(node.operand, temps, bindings);

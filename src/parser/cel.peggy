@@ -466,6 +466,8 @@ Selector "selector"
       return selector !== "true" && selector !== "false" && selector !== "null" && selector !== "in";
     }
     { return selector; }
+  / "`" chars:$([^`]*) "`"
+    { return chars; }
 
 /* ── literals ───────────────────────────────────────────────── */
 
