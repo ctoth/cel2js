@@ -574,6 +574,554 @@ export function celMatches(s: unknown, pattern: unknown): boolean | undefined {
   return undefined;
 }
 
+// ── String Extension Helpers ───────────────────────────────────────────────
+
+/** Convert string to array of codepoints */
+function toCodepoints(s: string): string[] {
+  return [...s];
+}
+
+/** Convert a codepoint index to a JS string index */
+function codepointToJsIndex(s: string, cpIndex: number): number {
+  const cps = toCodepoints(s);
+  if (cpIndex < 0 || cpIndex > cps.length) return -1;
+  let jsIdx = 0;
+  for (let i = 0; i < cpIndex; i++) {
+    jsIdx += (cps[i] as string).length;
+  }
+  return jsIdx;
+}
+
+/** Convert a JS string index to a codepoint index */
+function jsToCodepointIndex(s: string, jsIndex: number): number {
+  let cpIdx = 0;
+  let jsIdx = 0;
+  for (const cp of s) {
+    if (jsIdx >= jsIndex) break;
+    jsIdx += cp.length;
+    cpIdx++;
+  }
+  return cpIdx;
+}
+
+/** CEL string.charAt(index) — returns character at codepoint position */
+export function celCharAt(s: unknown, index: unknown): string | undefined {
+  if (!isStr(s)) return undefined;
+  if (!isInt(index) && !isCelUint(index)) return undefined;
+  const idx = isInt(index) ? Number(index) : Number((index as CelUint).value);
+  const cps = toCodepoints(s);
+  if (idx < 0 || idx > cps.length) return undefined;
+  if (idx === cps.length) return "";
+  return cps[idx] as string;
+}
+
+/** CEL string.indexOf(substr) or string.indexOf(substr, offset) */
+export function celIndexOf(
+  s: unknown,
+  substr: unknown,
+  offset?: unknown,
+  ...extra: unknown[]
+): bigint | undefined {
+  if (extra.length > 0) return undefined; // too many arguments
+  if (!isStr(s) || !isStr(substr)) return undefined;
+  const cps = toCodepoints(s);
+  let startCp = 0;
+  if (offset !== undefined) {
+    if (!isInt(offset) && !isCelUint(offset)) return undefined;
+    startCp = isInt(offset) ? Number(offset) : Number((offset as CelUint).value);
+    if (startCp < 0 || startCp > cps.length) return undefined;
+  }
+  // Convert codepoint offset to JS string index
+  const jsStart = codepointToJsIndex(s, startCp);
+  if (jsStart < 0) return undefined;
+  const jsIdx = s.indexOf(substr, jsStart);
+  if (jsIdx === -1) return -1n;
+  // Convert JS index back to codepoint index
+  return BigInt(jsToCodepointIndex(s, jsIdx));
+}
+
+/** CEL string.lastIndexOf(substr) or string.lastIndexOf(substr, offset) */
+export function celLastIndexOf(s: unknown, substr: unknown, offset?: unknown): bigint | undefined {
+  if (!isStr(s) || !isStr(substr)) return undefined;
+  const cps = toCodepoints(s);
+  if (offset !== undefined) {
+    if (!isInt(offset) && !isCelUint(offset)) return undefined;
+    const offCp = isInt(offset) ? Number(offset) : Number((offset as CelUint).value);
+    if (offCp < 0 || offCp > cps.length) return undefined;
+    // Search from the beginning up to offset (codepoint-based)
+    // Convert codepoint offset to JS string index for the search end
+    const jsEnd = codepointToJsIndex(s, offCp);
+    if (jsEnd < 0) return undefined;
+    const jsIdx = s.lastIndexOf(substr, jsEnd);
+    if (jsIdx === -1) return -1n;
+    return BigInt(jsToCodepointIndex(s, jsIdx));
+  }
+  // No offset: search the entire string
+  const jsIdx = s.lastIndexOf(substr);
+  if (jsIdx === -1) return -1n;
+  return BigInt(jsToCodepointIndex(s, jsIdx));
+}
+
+/** CEL string.lowerAscii() — lowercase only ASCII characters */
+export function celLowerAscii(s: unknown): string | undefined {
+  if (!isStr(s)) return undefined;
+  let result = "";
+  for (const ch of s) {
+    const code = ch.charCodeAt(0);
+    if (code >= 65 && code <= 90 && ch.length === 1) {
+      result += String.fromCharCode(code + 32);
+    } else {
+      result += ch;
+    }
+  }
+  return result;
+}
+
+/** CEL string.upperAscii() — uppercase only ASCII characters */
+export function celUpperAscii(s: unknown): string | undefined {
+  if (!isStr(s)) return undefined;
+  let result = "";
+  for (const ch of s) {
+    const code = ch.charCodeAt(0);
+    if (code >= 97 && code <= 122 && ch.length === 1) {
+      result += String.fromCharCode(code - 32);
+    } else {
+      result += ch;
+    }
+  }
+  return result;
+}
+
+/** CEL string.replace(old, new) or string.replace(old, new, count) */
+export function celReplace(
+  s: unknown,
+  old: unknown,
+  newStr: unknown,
+  count?: unknown,
+  ...extra: unknown[]
+): string | undefined {
+  if (extra.length > 0) return undefined; // too many arguments
+  if (!isStr(s) || !isStr(old) || !isStr(newStr)) return undefined;
+  if (count !== undefined) {
+    if (!isInt(count) && !isCelUint(count)) return undefined;
+    const maxReplacements = isInt(count) ? Number(count) : Number((count as CelUint).value);
+    if (maxReplacements < 0) {
+      // Negative count means replace all (same as no count)
+      return s.split(old).join(newStr);
+    }
+    let result = s;
+    for (let i = 0; i < maxReplacements; i++) {
+      const idx = result.indexOf(old);
+      if (idx === -1) break;
+      result = result.slice(0, idx) + newStr + result.slice(idx + old.length);
+    }
+    return result;
+  }
+  // No count: replace all occurrences
+  return s.split(old).join(newStr);
+}
+
+/** CEL string.split(separator) or string.split(separator, limit) */
+export function celSplit(
+  s: unknown,
+  separator: unknown,
+  limit?: unknown,
+  ...extra: unknown[]
+): string[] | undefined {
+  if (extra.length > 0) return undefined; // too many arguments
+  if (!isStr(s) || !isStr(separator)) return undefined;
+  if (limit !== undefined) {
+    if (!isInt(limit) && !isCelUint(limit)) return undefined;
+    const maxParts = isInt(limit) ? Number(limit) : Number((limit as CelUint).value);
+    if (maxParts < 0) {
+      // Negative limit means no limit (split all)
+      return s.split(separator);
+    }
+    if (maxParts === 0) return [];
+    // Split with limit: keep remainder in last element
+    if (maxParts === 1) return [s];
+    const parts: string[] = [];
+    let remaining = s;
+    for (let i = 0; i < maxParts - 1; i++) {
+      const idx = remaining.indexOf(separator);
+      if (idx === -1) break;
+      parts.push(remaining.slice(0, idx));
+      remaining = remaining.slice(idx + separator.length);
+    }
+    parts.push(remaining);
+    return parts;
+  }
+  return s.split(separator);
+}
+
+/** CEL string.substring(start) or string.substring(start, end) — codepoint-aware */
+export function celSubstring(
+  s: unknown,
+  start: unknown,
+  end?: unknown,
+  ...extra: unknown[]
+): string | undefined {
+  if (extra.length > 0) return undefined; // too many arguments
+  if (!isStr(s)) return undefined;
+  if (!isInt(start) && !isCelUint(start)) return undefined;
+  const cps = toCodepoints(s);
+  const startCp = isInt(start) ? Number(start) : Number((start as CelUint).value);
+  if (startCp < 0 || startCp > cps.length) return undefined;
+  if (end !== undefined) {
+    if (!isInt(end) && !isCelUint(end)) return undefined;
+    const endCp = isInt(end) ? Number(end) : Number((end as CelUint).value);
+    if (endCp < startCp || endCp > cps.length) return undefined;
+    return cps.slice(startCp, endCp).join("");
+  }
+  return cps.slice(startCp).join("");
+}
+
+/** CEL string.trim() — Unicode-aware whitespace trimming */
+export function celTrim(s: unknown): string | undefined {
+  if (!isStr(s)) return undefined;
+  // CEL trim uses Unicode whitespace definition
+  // This includes standard JS whitespace plus additional Unicode space characters
+  // JS .trim() handles most, but let's use a regex that matches CEL/Go's definition
+  // Go strings.TrimSpace trims: Unicode.IsSpace which includes:
+  // '\t', '\n', '\v', '\f', '\r', ' ', U+0085, U+00A0,
+  // U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000
+  // But NOT: U+180E (Mongolian vowel separator - not a space in modern Unicode)
+  // And NOT: U+200B-U+200D, U+2060, U+FEFF (zero-width chars)
+  const ws =
+    "[ \\t\\n\\v\\f\\r\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]";
+  const trimRe = new RegExp(`^${ws}+|${ws}+$`, "g");
+  return s.replace(trimRe, "");
+}
+
+/** CEL list.join() or list.join(separator) — join list elements */
+export function celJoin(list: unknown, separator?: unknown): string | undefined {
+  if (!isList(list)) return undefined;
+  const sep = separator === undefined ? "" : separator;
+  if (!isStr(sep)) return undefined;
+  const parts: string[] = [];
+  for (const item of list) {
+    if (!isStr(item)) return undefined;
+    parts.push(item);
+  }
+  return parts.join(sep);
+}
+
+/** CEL strings.quote(str) — escape and quote a string */
+export function celQuote(receiverOrStr: unknown, str?: unknown): string | undefined {
+  // Handle both strings.quote(s) -> quote(undefined, s) and direct quote(s)
+  const s = str !== undefined && isStr(str) ? str : receiverOrStr;
+  if (!isStr(s)) return undefined;
+  let result = '"';
+  for (const ch of s) {
+    switch (ch) {
+      case "\\":
+        result += "\\\\";
+        break;
+      case '"':
+        result += '\\"';
+        break;
+      case "\n":
+        result += "\\n";
+        break;
+      case "\r":
+        result += "\\r";
+        break;
+      case "\t":
+        result += "\\t";
+        break;
+      case "\x07":
+        result += "\\a";
+        break;
+      case "\b":
+        result += "\\b";
+        break;
+      case "\f":
+        result += "\\f";
+        break;
+      case "\v":
+        result += "\\v";
+        break;
+      default:
+        result += ch;
+        break;
+    }
+  }
+  result += '"';
+  return result;
+}
+
+/**
+ * Format a value for %s substitution in CEL string.format().
+ * This differs from celToString in that it doesn't quote strings
+ * and has specific formatting for lists and maps.
+ */
+function formatValueForS(v: unknown): string | undefined {
+  if (v === null) return "null";
+  if (isStr(v)) return v;
+  if (isInt(v)) return v.toString();
+  if (isCelUint(v)) return v.value.toString();
+  if (isDouble(v)) {
+    if (Number.isNaN(v)) return "NaN";
+    if (v === Number.POSITIVE_INFINITY) return "Infinity";
+    if (v === Number.NEGATIVE_INFINITY) return "-Infinity";
+    return String(v);
+  }
+  if (isBool(v)) return v ? "true" : "false";
+  if (isBytes(v)) {
+    // Decode bytes as UTF-8
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(v);
+    } catch {
+      return undefined;
+    }
+  }
+  if (isCelType(v)) return v.name;
+  if (isCelTimestamp(v)) return timestampToString(v);
+  if (isCelDuration(v)) return durationToString(v);
+  if (isList(v)) {
+    const parts: string[] = [];
+    for (const item of v) {
+      const s = formatValueForS(item);
+      if (s === undefined) return undefined;
+      parts.push(s);
+    }
+    return `[${parts.join(", ")}]`;
+  }
+  if (isMap(v)) {
+    // Format map with sorted keys
+    const entries: [string, string][] = [];
+    for (const [k, val] of v) {
+      const ks = formatValueForS(k);
+      const vs = formatValueForS(val);
+      if (ks === undefined || vs === undefined) return undefined;
+      entries.push([ks, vs]);
+    }
+    // Sort entries by key
+    entries.sort((a, b) => sortMapKeys(a[0], b[0]));
+    return `{${entries.map(([k, v2]) => `${k}: ${v2}`).join(", ")}}`;
+  }
+  // Unsupported types (proto messages, etc.) -> error
+  return undefined;
+}
+
+/** Compare two formatted map keys for sorting. Numeric keys first, then strings, then booleans. */
+function sortMapKeys(a: string, b: string): number {
+  const aIsNum = /^-?\d+(\.\d+)?$/.test(a);
+  const bIsNum = /^-?\d+(\.\d+)?$/.test(b);
+  const aIsBool = a === "true" || a === "false";
+  const bIsBool = b === "true" || b === "false";
+
+  // Numeric keys come first
+  if (aIsNum && !bIsNum) return -1;
+  if (!aIsNum && bIsNum) return 1;
+  if (aIsNum && bIsNum) return Number(a) - Number(b);
+
+  // Booleans come last
+  if (aIsBool && !bIsBool) return 1;
+  if (!aIsBool && bIsBool) return -1;
+
+  // Default: lexicographic
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** CEL string.format(args) — printf-like string formatting */
+export function celFormat(s: unknown, args: unknown): string | undefined {
+  if (!isStr(s) || !isList(args)) return undefined;
+
+  let result = "";
+  let argIdx = 0;
+  let i = 0;
+
+  while (i < s.length) {
+    if (s[i] === "%") {
+      i++;
+      if (i >= s.length) return undefined; // trailing %
+
+      if (s[i] === "%") {
+        result += "%";
+        i++;
+        continue;
+      }
+
+      // Check for precision specifier: %.Nf or %.Ne
+      let precision: number | undefined;
+      if (s[i] === ".") {
+        i++;
+        let numStr = "";
+        while (i < s.length) {
+          const ch = s[i] as string;
+          if (ch < "0" || ch > "9") break;
+          numStr += ch;
+          i++;
+        }
+        if (numStr.length > 0) {
+          precision = Number.parseInt(numStr, 10);
+        }
+      }
+
+      if (i >= s.length) return undefined;
+      const verb = s[i] as string;
+      i++;
+
+      if (argIdx >= args.length) return undefined; // not enough args
+      const arg = args[argIdx] as CelValue;
+      argIdx++;
+
+      const formatted = formatArg(arg, verb, precision);
+      if (formatted === undefined) return undefined;
+      result += formatted;
+    } else {
+      result += s[i];
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/** Format a single argument according to a format verb */
+function formatArg(arg: unknown, verb: string, precision?: number): string | undefined {
+  switch (verb) {
+    case "s":
+      return formatValueForS(arg);
+    case "d": {
+      // Decimal integer
+      if (isDouble(arg)) {
+        if (Number.isNaN(arg)) return "NaN";
+        if (arg === Number.POSITIVE_INFINITY) return "Infinity";
+        if (arg === Number.NEGATIVE_INFINITY) return "-Infinity";
+        return BigInt(Math.trunc(arg)).toString();
+      }
+      if (isInt(arg)) return arg.toString();
+      if (isCelUint(arg)) return arg.value.toString();
+      if (isBool(arg)) return arg ? "1" : "0";
+      return undefined;
+    }
+    case "f": {
+      // Fixed-point with banker's rounding (round half to even)
+      const n = toDoubleForFormat(arg);
+      if (n === undefined) return undefined;
+      if (Number.isNaN(n)) return "NaN";
+      if (n === Number.POSITIVE_INFINITY) return "Infinity";
+      if (n === Number.NEGATIVE_INFINITY) return "-Infinity";
+      const p = precision !== undefined ? precision : 6;
+      return toFixedBankersRounding(n, p);
+    }
+    case "e": {
+      // Scientific notation
+      const n = toDoubleForFormat(arg);
+      if (n === undefined) return undefined;
+      if (Number.isNaN(n)) return "NaN";
+      if (n === Number.POSITIVE_INFINITY) return "Infinity";
+      if (n === Number.NEGATIVE_INFINITY) return "-Infinity";
+      const p = precision !== undefined ? precision : 6;
+      return formatScientific(n, p);
+    }
+    case "b": {
+      // Binary
+      if (isInt(arg)) {
+        const val = arg < 0n ? -arg : arg;
+        return (arg < 0n ? "-" : "") + val.toString(2);
+      }
+      if (isCelUint(arg)) return arg.value.toString(2);
+      if (isBool(arg)) return arg ? "1" : "0";
+      return undefined;
+    }
+    case "o": {
+      // Octal
+      if (isInt(arg)) {
+        const val = arg < 0n ? -arg : arg;
+        return (arg < 0n ? "-" : "") + val.toString(8);
+      }
+      if (isCelUint(arg)) return arg.value.toString(8);
+      return undefined;
+    }
+    case "x": {
+      // Lowercase hex
+      if (isInt(arg)) {
+        const val = arg < 0n ? -arg : arg;
+        return (arg < 0n ? "-" : "") + val.toString(16);
+      }
+      if (isCelUint(arg)) return arg.value.toString(16);
+      if (isStr(arg)) return hexEncodeString(arg, false);
+      if (isBytes(arg)) return hexEncodeBytes(arg, false);
+      return undefined;
+    }
+    case "X": {
+      // Uppercase hex
+      if (isInt(arg)) {
+        const val = arg < 0n ? -arg : arg;
+        return (arg < 0n ? "-" : "") + val.toString(16).toUpperCase();
+      }
+      if (isCelUint(arg)) return arg.value.toString(16).toUpperCase();
+      if (isStr(arg)) return hexEncodeString(arg, true);
+      if (isBytes(arg)) return hexEncodeBytes(arg, true);
+      return undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Fixed-point formatting with banker's rounding (round half to even).
+ * Go's fmt.Sprintf uses this rounding mode.
+ */
+function toFixedBankersRounding(n: number, precision: number): string {
+  const factor = 10 ** precision;
+  const shifted = n * factor;
+  const truncated = Math.trunc(shifted);
+  const remainder = Math.abs(shifted - truncated);
+
+  let rounded: number;
+  if (Math.abs(remainder - 0.5) < 1e-10) {
+    // Exactly halfway: round to even
+    if (truncated % 2 === 0) {
+      rounded = truncated;
+    } else {
+      rounded = n >= 0 ? truncated + 1 : truncated - 1;
+    }
+  } else {
+    // Not halfway: use normal rounding
+    rounded = Math.round(shifted);
+  }
+
+  const result = rounded / factor;
+  return result.toFixed(precision);
+}
+
+/** Convert a value to double for format operations */
+function toDoubleForFormat(v: unknown): number | undefined {
+  if (isDouble(v)) return v;
+  if (isInt(v)) return Number(v);
+  if (isCelUint(v)) return Number(v.value);
+  return undefined;
+}
+
+/** Format a number in scientific notation (Go-compatible) */
+function formatScientific(n: number, precision: number): string {
+  // Use JS toExponential then normalize to Go format
+  const s = n.toExponential(precision);
+  // JS: "1.052033e+3" -> Go: "1.052033e+03" (always 2+ digits in exponent)
+  return s.replace(/e([+-])(\d)$/, "e$1" + "0$2");
+}
+
+/** Hex-encode a string (each byte of UTF-8 encoding) */
+function hexEncodeString(s: string, upper: boolean): string {
+  const bytes = new TextEncoder().encode(s);
+  return hexEncodeBytes(bytes, upper);
+}
+
+/** Hex-encode bytes */
+function hexEncodeBytes(b: Uint8Array, upper: boolean): string {
+  let result = "";
+  for (const byte of b) {
+    const hex = byte.toString(16).padStart(2, "0");
+    result += upper ? hex.toUpperCase() : hex;
+  }
+  return result;
+}
+
 // ── Type Conversion Helpers ────────────────────────────────────────────────
 
 export function celToInt(v: unknown): bigint | undefined {
@@ -834,44 +1382,59 @@ export function isCelDuration(v: unknown): v is CelDuration {
 }
 
 /**
- * Parse a duration string like "100s", "1.5h", "-2m30s", etc.
+ * Parse a duration string like "100s", "1.5h", "1h45m47s", "-2m30s", etc.
+ * Supports compound formats: "1h2m3s", "1h30m", "2m30s", etc.
  * Returns CelDuration or undefined on error.
  */
 function parseDurationString(s: string): CelDuration | undefined {
-  // Support compound duration formats like "1h2m3s", "1h30m", "2m30s", etc.
-  // Simple format: optional sign, number, unit
-  const simpleRe = /^(-)?(\d+(?:\.\d+)?)(s|ms|us|ns|m|h)$/;
-  const match = simpleRe.exec(s);
-  if (!match) return undefined;
-  const [, sign, numStr, unit] = match;
-  const num = Number(numStr);
-  if (!Number.isFinite(num)) return undefined;
+  if (s.length === 0) return undefined;
 
-  let totalNanos: number;
-  switch (unit) {
-    case "h":
-      totalNanos = num * 3600e9;
-      break;
-    case "m":
-      totalNanos = num * 60e9;
-      break;
-    case "s":
-      totalNanos = num * 1e9;
-      break;
-    case "ms":
-      totalNanos = num * 1e6;
-      break;
-    case "us":
-      totalNanos = num * 1e3;
-      break;
-    case "ns":
-      totalNanos = num;
-      break;
-    default:
-      return undefined;
+  let neg = false;
+  let rest = s;
+  if (rest[0] === "-") {
+    neg = true;
+    rest = rest.slice(1);
+  }
+  if (rest.length === 0) return undefined;
+
+  // Match one or more value+unit pairs
+  const partRe = /^(\d+(?:\.\d+)?)(h|m(?!s)|s|ms|us|ns)/;
+  let totalNanos = 0;
+  let matched = false;
+  while (rest.length > 0) {
+    const m = partRe.exec(rest);
+    if (!m) return undefined;
+    matched = true;
+    const num = Number(m[1]);
+    if (!Number.isFinite(num)) return undefined;
+    const unit = m[2] as string;
+    switch (unit) {
+      case "h":
+        totalNanos += num * 3600e9;
+        break;
+      case "m":
+        totalNanos += num * 60e9;
+        break;
+      case "s":
+        totalNanos += num * 1e9;
+        break;
+      case "ms":
+        totalNanos += num * 1e6;
+        break;
+      case "us":
+        totalNanos += num * 1e3;
+        break;
+      case "ns":
+        totalNanos += num;
+        break;
+      default:
+        return undefined;
+    }
+    rest = rest.slice(m[0].length);
   }
 
-  if (sign === "-") totalNanos = -totalNanos;
+  if (!matched) return undefined;
+  if (neg) totalNanos = -totalNanos;
 
   const seconds = BigInt(Math.trunc(totalNanos / 1e9));
   const nanos = Math.round(totalNanos % 1e9);
@@ -1477,6 +2040,19 @@ export function createRuntime() {
     getMinutes: celGetMinutes,
     getSeconds: celGetSeconds,
     getMilliseconds: celGetMilliseconds,
+    // String extensions
+    charAt: celCharAt,
+    indexOf: celIndexOf,
+    lastIndexOf: celLastIndexOf,
+    lowerAscii: celLowerAscii,
+    upperAscii: celUpperAscii,
+    replace: celReplace,
+    split: celSplit,
+    substring: celSubstring,
+    trim: celTrim,
+    join: celJoin,
+    quote: celQuote,
+    format: celFormat,
     // Types
     CelUint,
     celUint: (n: bigint) => new CelUint(n),

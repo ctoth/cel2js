@@ -59,7 +59,7 @@ export const SKIP_PATHS: string[][] = [
   ["proto2_ext"],
 
   // Extensions
-  ["string_ext"],
+  // ["string_ext"],  -- enabling: string extension functions
   ["math_ext"],
   ["network_ext"],
   ["bindings_ext"],
