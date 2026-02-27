@@ -9,6 +9,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
+    "build:parser": "peggy --format es -o src/parser/parser.js src/parser/cel.peggy",
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -30,6 +31,7 @@
     "@marcbachmann/cel-js": "^7.5.1",
     "cel-js": "^0.8.2",
     "lefthook": "^2.1.1",
+    "peggy": "^5.0.6",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },

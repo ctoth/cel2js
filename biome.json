@@ -25,6 +25,6 @@
     }
   },
   "files": {
-    "includes": ["src/**", "test/**", "bench/**", "*.json", "*.ts"]
+    "includes": ["src/**/*.ts", "test/**", "bench/**", "*.json", "*.ts"]
   }
 }
