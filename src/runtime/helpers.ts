@@ -1355,6 +1355,30 @@ export function celDyn(v: unknown): unknown {
   return v;
 }
 
+/**
+ * Enum constructor: convert an int or string to an enum value.
+ * - Int arg: validate int32 range, return as BigInt
+ * - String arg: look up the name in the enum definition object
+ * @param enumDef The enum definition object (e.g. { FOO: 0n, BAR: 1n, BAZ: 2n })
+ * @param arg The int or string argument
+ */
+export function celEnumConstruct(enumDef: unknown, arg: unknown): bigint | undefined {
+  if (typeof arg === "bigint") {
+    // Validate int32 range
+    if (arg < -(2n ** 31n) || arg > 2n ** 31n - 1n) return undefined;
+    return arg;
+  }
+  if (typeof arg === "string") {
+    // Look up enum name
+    if (enumDef && typeof enumDef === "object") {
+      const val = (enumDef as Record<string, unknown>)[arg];
+      if (typeof val === "bigint") return val;
+    }
+    return undefined; // unknown enum name
+  }
+  return undefined;
+}
+
 // ── Timestamp Helper ──────────────────────────────────────────────────────
 
 /** A CEL timestamp value: stores seconds since epoch and nanoseconds within the second */
@@ -1689,6 +1713,31 @@ function isFloat32FieldName(field: string): boolean {
   );
 }
 
+/** Check if a field name is a float32 wrapper field */
+function isFloat32WrapperFieldName(field: string): boolean {
+  return field === "single_float_wrapper" || field.startsWith("repeated_float_wrapper");
+}
+
+/** Check if a field name is an int32 wrapper field */
+function isInt32WrapperFieldName(field: string): boolean {
+  return field === "single_int32_wrapper" || field.startsWith("repeated_int32_wrapper");
+}
+
+/** Check if a field name is a uint32 wrapper field */
+function isUint32WrapperFieldName(field: string): boolean {
+  return field === "single_uint32_wrapper" || field.startsWith("repeated_uint32_wrapper");
+}
+
+/** Check if a field name is an enum field */
+function isEnumFieldName(field: string): boolean {
+  return field.includes("enum");
+}
+
+// Int32/Uint32 range constants
+const INT32_MIN = -(2n ** 31n);
+const INT32_MAX = 2n ** 31n - 1n;
+const UINT32_MAX = 2n ** 32n - 1n;
+
 /**
  * Known proto3 oneof field names from cel-spec TestAllTypes.
  * Oneof fields in proto3 always track presence (has() = was-set, not non-zero).
@@ -1710,6 +1759,20 @@ function protoFieldDefault(
   if (isRepeatedFieldName(field)) return [] as CelValue[];
   // Map fields default to empty map
   if (isMapFieldName(field)) return new Map<CelValue, CelValue>();
+  // Wrapper types (google.protobuf.*Value) default to null (nullable)
+  // MUST come before type-specific checks since field names like
+  // "single_float_wrapper" would match both "float" and "_wrapper".
+  if (field.includes("_wrapper")) {
+    return null;
+  }
+  // Well-known struct field types
+  if (field === "single_struct") {
+    return new Map<CelValue, CelValue>();
+  }
+  // Well-known value field types (single_value defaults to null)
+  if (field === "single_value" || field === "null_value" || field === "optional_null_value") {
+    return null;
+  }
   // Unsigned integer field types
   if (
     field.includes("uint") ||
@@ -1733,10 +1796,6 @@ function protoFieldDefault(
   // Bytes field types
   if (field === "single_bytes" || field.endsWith("_bytes")) {
     return new Uint8Array(0);
-  }
-  // Wrapper types (google.protobuf.*Value) default to null (nullable)
-  if (field.includes("_wrapper")) {
-    return null;
   }
   // Message fields: return a default-constructed nested message struct
   if (field.includes("_message")) {
@@ -1770,10 +1829,61 @@ export function celMakeStruct(_name: string, entries: [string, CelValue][]): Cel
   if (_name === "google.protobuf.Value" && entries.length === 0) {
     return null;
   }
+  // google.protobuf.Value with a field set: unwrap to the appropriate primitive
+  if (_name === "google.protobuf.Value") {
+    for (const [field, value] of entries) {
+      if (field === "null_value") return null;
+      if (field === "number_value") return value;
+      if (field === "string_value") return value;
+      if (field === "bool_value") return value;
+      if (field === "struct_value") {
+        // struct_value should be a Map already (from map literal)
+        if (value instanceof Map) return value;
+        return value;
+      }
+      if (field === "list_value") {
+        // list_value should be an array already
+        if (Array.isArray(value)) return value;
+        return value;
+      }
+    }
+    return null;
+  }
+  // google.protobuf.Struct: unwrap to Map
+  if (_name === "google.protobuf.Struct") {
+    for (const [field, value] of entries) {
+      if (field === "fields") {
+        if (value instanceof Map) return value;
+      }
+    }
+    return new Map() as unknown as CelValue;
+  }
+  // google.protobuf.ListValue: unwrap to array
+  if (_name === "google.protobuf.ListValue") {
+    for (const [field, value] of entries) {
+      if (field === "values") {
+        if (Array.isArray(value)) return value;
+      }
+    }
+    return [] as CelValue;
+  }
+  // google.protobuf.Any: create a struct with the fields
+  if (_name === "google.protobuf.Any") {
+    // An empty Any{} is an error
+    if (entries.length === 0) return undefined;
+    // Any{type_url: ..., value: ...} — just create a struct with these fields
+    // (but field access on Any is not supported — only whole-value operations)
+  }
   // Protobuf wrapper types unwrap to their primitive value
   if (_name in WRAPPER_DEFAULTS) {
     for (const [field, value] of entries) {
-      if (field === "value") return value;
+      if (field === "value") {
+        // FloatValue: truncate to float32 precision
+        if (_name === "google.protobuf.FloatValue" && typeof value === "number") {
+          return Math.fround(value);
+        }
+        return value;
+      }
     }
     return WRAPPER_DEFAULTS[_name] as CelValue;
   }
@@ -1789,6 +1899,24 @@ export function celMakeStruct(_name: string, entries: [string, CelValue][]): Cel
         return undefined; // error: cannot set scalar/repeated/map/struct to null
       }
     }
+    // Range validation for int32 wrapper fields
+    if (isInt32WrapperFieldName(field) && typeof value === "bigint") {
+      if (value < INT32_MIN || value > INT32_MAX) return undefined;
+    }
+    // Range validation for uint32 wrapper fields
+    if (isUint32WrapperFieldName(field) && isCelUint(value)) {
+      if (value.value > UINT32_MAX) return undefined;
+    }
+    // Range validation for enum fields (int32 range)
+    if (isEnumFieldName(field) && typeof value === "bigint") {
+      if (value < INT32_MIN || value > INT32_MAX) return undefined;
+    }
+    // Struct field key validation: single_struct must have string keys only
+    if (field === "single_struct" && value instanceof Map) {
+      for (const k of value.keys()) {
+        if (typeof k !== "string") return undefined;
+      }
+    }
   }
   const obj: Record<string | symbol, unknown> = {};
   obj.__type = _name;
@@ -1796,7 +1924,10 @@ export function celMakeStruct(_name: string, entries: [string, CelValue][]): Cel
   const fields = new Set<string>();
   for (const [field, value] of entries) {
     // Proto float fields are float32; truncate to float32 precision
-    if (isFloat32FieldName(field) && typeof value === "number") {
+    if (
+      (isFloat32FieldName(field) || isFloat32WrapperFieldName(field)) &&
+      typeof value === "number"
+    ) {
       obj[field] = Math.fround(value);
     } else {
       obj[field] = value;
@@ -2781,6 +2912,7 @@ export function createRuntime(options?: RuntimeOptions) {
     toBytes: celToBytes,
     type: celType,
     dyn: celDyn,
+    enumConstruct: celEnumConstruct,
     // Macros
     all: celAll,
     exists: celExists,

@@ -67,9 +67,28 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (value !== undefined) return value;
-      // Unknown property: return a function that returns undefined (CEL error)
+      // Unknown property: check if it's an enum constructor pattern
       if (typeof prop === "string") {
-        return () => undefined;
+        return (...args: unknown[]) => {
+          // Pattern: _rt.EnumName(receiver, arg) where receiver.EnumName is an enum def
+          if (args.length === 2) {
+            const maybeReceiver = args[0];
+            if (maybeReceiver && typeof maybeReceiver === "object" && prop in maybeReceiver) {
+              const enumDef = (maybeReceiver as Record<string, unknown>)[prop];
+              return baseRuntime.enumConstruct(enumDef, args[1]);
+            }
+          }
+          // Pattern: _rt.GlobalEnum(arg) where GlobalEnum is a known enum in bindings
+          if (args.length === 1) {
+            const qualifiedName = container ? `${container}.${prop}` : prop;
+            const enumDef =
+              defaultQualifiedBindings[qualifiedName] ?? defaultQualifiedBindings[prop];
+            if (enumDef && typeof enumDef === "object" && !(enumDef instanceof CelType)) {
+              return baseRuntime.enumConstruct(enumDef, args[0]);
+            }
+          }
+          return undefined;
+        };
       }
       return undefined;
     },
@@ -77,6 +96,9 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
 
   // Proto enum constant definitions (for conformance test compatibility)
   const nestedEnum = { FOO: 0n, BAR: 1n, BAZ: 2n };
+  const globalEnum = { GOO: 0n, GAR: 1n, GAZ: 2n };
+  // NullValue enum (used with google.protobuf.Value)
+  const nullValueEnum = { NULL_VALUE: 0n };
   // TestAllTypes type object with enum inner types
   const testAllTypesType = {
     NestedEnum: nestedEnum,
@@ -106,9 +128,16 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
     "cel.expr.conformance.proto2.TestAllTypes": testAllTypesType,
     "cel.expr.conformance.proto3.TestAllTypes": testAllTypesType,
     "cel.expr.conformance.proto2.TestRequired": testRequiredType,
+    // Proto enum types
+    "cel.expr.conformance.proto2.GlobalEnum": globalEnum,
+    "cel.expr.conformance.proto3.GlobalEnum": globalEnum,
+    // NullValue enum (used with google.protobuf.Value null_value field)
+    "google.protobuf.NullValue": nullValueEnum,
+    NullValue: nullValueEnum,
     // Unqualified names (resolved via container prefix on the binding parameter)
     TestAllTypes: testAllTypesType,
     TestRequired: testRequiredType,
+    GlobalEnum: globalEnum,
   };
 
   const evaluate = (bindings?: Record<string, unknown>): unknown => {
@@ -124,7 +153,12 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
           continue;
         }
       }
-      args.push(bindings?.[name]);
+      // Prefer user-provided binding; fall back to default qualified binding
+      if (bindings && name in bindings) {
+        args.push(bindings[name]);
+      } else {
+        args.push(qualifiedBindings[name]);
+      }
     }
     const result = compiledFn(...args);
     // undefined is our error sentinel — convert to a thrown CelError at the boundary

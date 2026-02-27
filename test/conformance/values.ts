@@ -11,10 +11,23 @@ import type { Value } from "@bufbuild/cel-spec/cel/expr/value_pb.js";
 import type { DescField, DescMessage } from "@bufbuild/protobuf";
 import { fromBinary, isFieldSet } from "@bufbuild/protobuf";
 import {
+  AnySchema,
+  BoolValueSchema,
+  BytesValueSchema,
+  DoubleValueSchema,
   type Duration,
   DurationSchema,
+  FloatValueSchema,
+  Int32ValueSchema,
+  Int64ValueSchema,
+  ListValueSchema,
+  StringValueSchema,
+  StructSchema,
   type Timestamp,
   TimestampSchema,
+  UInt32ValueSchema,
+  UInt64ValueSchema,
+  ValueSchema,
 } from "@bufbuild/protobuf/wkt";
 import { CelDuration, CelTimestamp, celMakeStruct } from "../../src/runtime/helpers.js";
 import type { CelValue } from "../../src/runtime/types.js";
@@ -137,6 +150,22 @@ function convertFieldValue(field: DescField, value: unknown): CelValue {
       const val = value as { kind: { case: string; value: unknown } };
       return convertProtobufJsonValue(val) as CelValue;
     }
+    // google.protobuf.Struct: protobuf-es represents as plain JS object (JsonObject)
+    // Must come before generic wrapper check since Struct doesn't end in "Value"
+    if (msgTypeName === "google.protobuf.Struct") {
+      const obj = value as Record<string, unknown>;
+      const m = new Map<CelValue, CelValue>();
+      for (const [k, v] of Object.entries(obj)) {
+        m.set(k, convertProtobufJsonValue(v) as CelValue);
+      }
+      return m;
+    }
+    // google.protobuf.ListValue: protobuf-es represents as { values: Value[] }
+    // Must come before generic wrapper check since "ListValue" ends with "Value"
+    if (msgTypeName === "google.protobuf.ListValue") {
+      const lv = value as { values: unknown[] };
+      return (lv.values ?? []).map((v) => convertProtobufJsonValue(v) as CelValue);
+    }
     // Wrapper types: protobuf-es already unwraps these to primitives
     if (msgTypeName.startsWith("google.protobuf.") && msgTypeName.endsWith("Value")) {
       // The value is already unwrapped by protobuf-es (bigint, number, string, etc.)
@@ -169,20 +198,6 @@ function convertFieldValue(field: DescField, value: unknown): CelValue {
         return inner as Uint8Array;
       }
       return inner as CelValue;
-    }
-    // google.protobuf.Struct: protobuf-es represents as plain JS object (JsonObject)
-    if (msgTypeName === "google.protobuf.Struct") {
-      const obj = value as Record<string, unknown>;
-      const m = new Map<CelValue, CelValue>();
-      for (const [k, v] of Object.entries(obj)) {
-        m.set(k, convertProtobufJsonValue(v) as CelValue);
-      }
-      return m;
-    }
-    // google.protobuf.ListValue: protobuf-es represents as { values: Value[] }
-    if (msgTypeName === "google.protobuf.ListValue") {
-      const lv = value as { values: unknown[] };
-      return (lv.values ?? []).map((v) => convertProtobufJsonValue(v) as CelValue);
     }
     // google.protobuf.Any: recursively unpack
     if (msgTypeName === "google.protobuf.Any") {
@@ -343,6 +358,71 @@ export function protoValueToJS(value: Value): unknown {
       if (any.typeUrl === "type.googleapis.com/google.protobuf.Timestamp") {
         const ts = fromBinary(TimestampSchema, any.value);
         return new CelTimestamp(ts.seconds, ts.nanos);
+      }
+      // Wrapper types: unpack to primitive CEL values
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.Int32Value") {
+        const msg = fromBinary(Int32ValueSchema, any.value);
+        return BigInt(msg.value);
+      }
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.Int64Value") {
+        const msg = fromBinary(Int64ValueSchema, any.value);
+        return msg.value; // already bigint
+      }
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.UInt32Value") {
+        const msg = fromBinary(UInt32ValueSchema, any.value);
+        return new CelUint(BigInt(msg.value));
+      }
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.UInt64Value") {
+        const msg = fromBinary(UInt64ValueSchema, any.value);
+        return new CelUint(msg.value);
+      }
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.FloatValue") {
+        const msg = fromBinary(FloatValueSchema, any.value);
+        return msg.value;
+      }
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.DoubleValue") {
+        const msg = fromBinary(DoubleValueSchema, any.value);
+        return msg.value;
+      }
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.BoolValue") {
+        const msg = fromBinary(BoolValueSchema, any.value);
+        return msg.value;
+      }
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.StringValue") {
+        const msg = fromBinary(StringValueSchema, any.value);
+        return msg.value;
+      }
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.BytesValue") {
+        const msg = fromBinary(BytesValueSchema, any.value);
+        return msg.value;
+      }
+      // google.protobuf.Value: dynamic JSON-like value
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.Value") {
+        const msg = fromBinary(ValueSchema, any.value);
+        return convertProtobufJsonValue(msg) as CelValue;
+      }
+      // google.protobuf.Struct: map of string -> Value
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.Struct") {
+        const msg = fromBinary(StructSchema, any.value) as unknown as Record<string, unknown>;
+        const fieldsObj = (msg as { fields?: Record<string, unknown> }).fields ?? msg;
+        const m = new Map<CelValue, CelValue>();
+        for (const [k, v] of Object.entries(fieldsObj)) {
+          m.set(k, convertProtobufJsonValue(v) as CelValue);
+        }
+        return m;
+      }
+      // google.protobuf.ListValue: list of Values
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.ListValue") {
+        const msg = fromBinary(ListValueSchema, any.value);
+        return msg.values.map((v) => convertProtobufJsonValue(v) as CelValue);
+      }
+      // google.protobuf.Any: recursively unpack
+      if (any.typeUrl === "type.googleapis.com/google.protobuf.Any") {
+        const msg = fromBinary(AnySchema, any.value);
+        // Create a synthetic Value with objectValue case and recurse
+        return protoValueToJS({
+          kind: { case: "objectValue", value: msg },
+        } as Value);
       }
       // Proto message types (TestAllTypes, NestedMessage, etc.)
       const schema = PROTO_SCHEMAS[any.typeUrl];

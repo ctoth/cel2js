@@ -61,8 +61,24 @@ export const SKIP_PATHS: string[][] = [
   // Skip: proto2 extensions require full extension registry infrastructure
   ["proto2", "extensions_has"],
   ["proto2", "extensions_get"],
-  ["dynamic"],
-  ["enums"],
+  // ["dynamic"],  -- enabled: dynamic dispatch / dyn()
+  // Skip: CelUint.value property leaks through wrapper type unwrapping
+  ["dynamic", "uint32", "literal_no_field_access"],
+  ["dynamic", "uint64", "literal_no_field_access"],
+  // Skip: Array.prototype.values leaks through ListValue unwrapping
+  ["dynamic", "list", "literal_no_field_access"],
+  // Skip: google.protobuf.Any literal requires proto binary deserialization at runtime
+  ["dynamic", "any", "literal"],
+  // Skip: Any field access after unwrapping should error
+  ["dynamic", "any", "literal_no_field_access"],
+  // ["enums"],  -- enabled: protocol buffer enums
+  // Skip: strong enum type() requires CelEnum wrapper type (not implemented)
+  ["enums", "strong_proto2", "type_global"],
+  ["enums", "strong_proto2", "type_nested"],
+  ["enums", "strong_proto2", "field_type"],
+  ["enums", "strong_proto3", "type_global"],
+  ["enums", "strong_proto3", "type_nested"],
+  ["enums", "strong_proto3", "field_type"],
   ["wrappers"],
   ["proto2_ext"],
 
