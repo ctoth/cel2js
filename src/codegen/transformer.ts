@@ -10,6 +10,7 @@ import {
   bigintLiteral,
   binaryExpr,
   blockStatement,
+  callExpr,
   conditional,
   exprStatement,
   identifier,
@@ -506,6 +507,30 @@ function transformCall(
   if (rtMethod !== undefined) {
     const transformedArgs = args.map((a) => transformExpr(a, temps, bindings));
     return rtCall(rtMethod, transformedArgs);
+  }
+
+  // -- cel.bind(varName, initExpr, bodyExpr) -> IIFE binding -----------
+  if (
+    fn === "bind" &&
+    target !== undefined &&
+    target.kind === "Ident" &&
+    target.name === "cel" &&
+    args.length === 3
+  ) {
+    const varNameNode = at(args, 0);
+    if (varNameNode.kind !== "Ident") {
+      throw new Error("cel.bind: first argument must be an identifier");
+    }
+    const varName = varNameNode.name;
+    const initExpr = transformExpr(at(args, 1), temps, bindings);
+
+    // Body uses a local scope: the bound variable should NOT leak to outer bindings
+    const innerBindings = new Set(bindings);
+    innerBindings.add(varName);
+    const bodyExpr = transformExpr(at(args, 2), temps, innerBindings);
+
+    // Generate: ((varName) => bodyExpr)(initExpr)
+    return callExpr(arrowFn([identifier(varName)], bodyExpr, true), [initExpr]);
   }
 
   // -- Namespace function call: math.fn(args) -> _rt["math.fn"](args) ---
