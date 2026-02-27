@@ -106,4 +106,4 @@ npm run bench:run   # Single run
 
 ## Commit Hash
 
-See git log for the commit adding this benchmark harness.
+`51e6434` -- "Add benchmark harness comparing cel2js against 3 competitors and native baseline"
