@@ -69,7 +69,6 @@ vs other CEL implementations (hot path):
 function compile(cel: string, options?: CompileOptions): CompileResult;
 
 interface CompileOptions {
-  disableMacros?: boolean;  // Disable macro expansion (has, all, exists, exists_one, map, filter)
   container?: string;       // CEL container (namespace) for identifier resolution
 }
 

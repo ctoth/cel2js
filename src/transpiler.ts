@@ -26,8 +26,6 @@ export interface CompileResult {
 }
 
 export interface CompileOptions {
-  /** Disable macro expansion */
-  disableMacros?: boolean;
   /** CEL container (namespace) for identifier resolution */
   container?: string;
 }
