@@ -373,11 +373,6 @@ const MEMBER_FUNC_TO_RT: Record<string, string> = {
   endsWith: "endsWith",
   matches: "matches",
   size: "size",
-  exists: "exists",
-  all: "all",
-  exists_one: "existsOne",
-  filter: "filter",
-  map: "map",
   // String extensions
   charAt: "charAt",
   indexOf: "indexOf",

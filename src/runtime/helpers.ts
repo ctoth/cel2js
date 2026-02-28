@@ -1725,83 +1725,6 @@ export function celTimestamp(v: unknown): CelTimestamp | undefined {
   return undefined;
 }
 
-// ── Macro Helpers ──────────────────────────────────────────────────────────
-
-export function celAll(
-  list: unknown,
-  predicate: (elem: CelValue, index: bigint) => unknown,
-): boolean | undefined {
-  if (!isList(list)) return undefined;
-  let hasError = false;
-  for (let i = 0; i < list.length; i++) {
-    const elem = list[i] as CelValue;
-    const result = predicate(elem, BigInt(i));
-    if (result === false) return false; // short-circuit: false wins over error
-    if (result !== true) hasError = true; // undefined (error)
-  }
-  return hasError ? undefined : true;
-}
-
-export function celExists(
-  list: unknown,
-  predicate: (elem: CelValue, index: bigint) => unknown,
-): boolean | undefined {
-  if (!isList(list)) return undefined;
-  let hasError = false;
-  for (let i = 0; i < list.length; i++) {
-    const elem = list[i] as CelValue;
-    const result = predicate(elem, BigInt(i));
-    if (result === true) return true; // short-circuit: true wins over error
-    if (result !== false) hasError = true; // undefined (error)
-  }
-  return hasError ? undefined : false;
-}
-
-export function celExistsOne(
-  list: unknown,
-  predicate: (elem: CelValue, index: bigint) => unknown,
-): boolean | undefined {
-  if (!isList(list)) return undefined;
-  let count = 0;
-  for (let i = 0; i < list.length; i++) {
-    const elem = list[i] as CelValue;
-    const result = predicate(elem, BigInt(i));
-    if (result === undefined) return undefined;
-    if (result === true) count++;
-  }
-  return count === 1;
-}
-
-export function celMap(
-  list: unknown,
-  transform: (elem: CelValue, index: bigint) => CelValue | undefined,
-): CelValue[] | undefined {
-  if (!isList(list)) return undefined;
-  const result: CelValue[] = [];
-  for (let i = 0; i < list.length; i++) {
-    const elem = list[i] as CelValue;
-    const mapped = transform(elem, BigInt(i));
-    if (mapped === undefined) return undefined;
-    result.push(mapped);
-  }
-  return result;
-}
-
-export function celFilter(
-  list: unknown,
-  predicate: (elem: CelValue, index: bigint) => unknown,
-): CelValue[] | undefined {
-  if (!isList(list)) return undefined;
-  const result: CelValue[] = [];
-  for (let i = 0; i < list.length; i++) {
-    const elem = list[i] as CelValue;
-    const keep = predicate(elem, BigInt(i));
-    if (keep === undefined) return undefined;
-    if (keep === true) result.push(elem);
-  }
-  return result;
-}
-
 // ── List / Map / Struct / Comprehension Helpers ───────────────────────
 
 /** Create a CEL list, propagating errors. Returns undefined if any element is undefined. */
@@ -2362,91 +2285,6 @@ export function celFilterList(range: unknown, predicate: (elem: unknown) => unkn
     return result;
   }
   return undefined;
-}
-
-// ── Logical Helpers ────────────────────────────────────────────────────────
-
-/**
- * CEL conditional (ternary) with error handling.
- * If condition is an error (undefined), propagates the error.
- */
-export function celCond(
-  condition: unknown,
-  trueVal: () => unknown,
-  falseVal: () => unknown,
-): unknown {
-  if (condition === undefined) return undefined;
-  return condition ? trueVal() : falseVal();
-}
-
-/**
- * CEL logical NOT. Returns !bool or undefined for non-bool.
- */
-export function celNot(v: unknown): boolean | undefined {
-  if (isBool(v)) return !v;
-  return undefined;
-}
-
-/**
- * CEL logical OR with error absorption.
- * true || error = true
- * error || true = true
- * false || error = error
- * error || false = error
- * error || error = error
- */
-export function celOr(a: unknown, b: () => unknown): boolean | undefined {
-  if (a === true) return true;
-  const bv = b();
-  if (bv === true) return true;
-  if (a === false && bv === false) return false;
-  return undefined;
-}
-
-/**
- * CEL logical AND with error absorption.
- * false && error = false
- * error && false = false
- * true && error = error
- * error && true = error
- * error && error = error
- */
-export function celAnd(a: unknown, b: () => unknown): boolean | undefined {
-  if (a === false) return false;
-  const bv = b();
-  if (bv === false) return false;
-  if (a === true && bv === true) return true;
-  return undefined;
-}
-
-/**
- * CEL logical OR for N operands (commutative error absorption).
- * Evaluates all operands eagerly.
- * true wins over error, error wins over false.
- */
-export function celOrN(operands: (() => unknown)[]): boolean | undefined {
-  let hasError = false;
-  for (const op of operands) {
-    const v = op();
-    if (v === true) return true;
-    if (v !== false) hasError = true;
-  }
-  return hasError ? undefined : false;
-}
-
-/**
- * CEL logical AND for N operands (commutative error absorption).
- * Evaluates all operands eagerly.
- * false wins over error, error wins over true.
- */
-export function celAndN(operands: (() => unknown)[]): boolean | undefined {
-  let hasError = false;
-  for (const op of operands) {
-    const v = op();
-    if (v === false) return false;
-    if (v !== true) hasError = true;
-  }
-  return hasError ? undefined : true;
 }
 
 // ── Timestamp / Duration Accessor Helpers ──────────────────────────────────
@@ -3653,19 +3491,6 @@ export function createRuntime(options?: RuntimeOptions) {
     type: celType,
     dyn: celDyn,
     enumConstruct: celEnumConstruct,
-    // Macros
-    all: celAll,
-    exists: celExists,
-    existsOne: celExistsOne,
-    map: celMap,
-    filter: celFilter,
-    // Logical
-    cond: celCond,
-    not: celNot,
-    or: celOr,
-    and: celAnd,
-    orN: celOrN,
-    andN: celAndN,
     // List / Map / Struct / Comprehension
     makeList: celMakeList,
     makeMap: celMakeMap,
