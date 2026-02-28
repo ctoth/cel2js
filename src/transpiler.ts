@@ -1,7 +1,13 @@
 import { generateJs } from "./codegen/codegen.js";
 import { transform } from "./codegen/transformer.js";
 import { parse } from "./parser/index.js";
-import { createRuntime } from "./runtime/helpers.js";
+import {
+  celSelect,
+  celSelectPath2,
+  celSelectPath3,
+  celSelectPath4,
+  createRuntime,
+} from "./runtime/helpers.js";
 import { CelType } from "./runtime/types.js";
 
 /** Error thrown when CEL evaluation fails (e.g. division by zero, type mismatch) */
@@ -58,6 +64,7 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
   ) => unknown;
   const compiledFn = factory();
   const bindingNames = result.bindings;
+  const qualifiedBindingSpecs = result.qualifiedBindings;
   const container = options?.container;
   const baseRuntime = createRuntime(container ? { container } : undefined);
 
@@ -146,6 +153,7 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
       return cachedBindings;
     }
     const qb = { ...defaultQualifiedBindings, ...bindings };
+    populateQualifiedBindings(qb, bindings);
     cachedBindingsArg = bindings;
     cachedBindings = qb;
     return qb;
@@ -167,6 +175,80 @@ export function compile(cel: string, options?: CompileOptions): CompileResult {
       return bindings[name];
     }
     return qb[name];
+  };
+
+  /** Apply a field select chain using the same helpers as generated code. */
+  const applySelectFields = (base: unknown, fields: readonly string[]): unknown => {
+    if (fields.length === 0) return base;
+    if (fields.length === 1) return celSelect(base, fields[0] as string);
+    if (fields.length === 2) {
+      return celSelectPath2(base, fields[0] as string, fields[1] as string);
+    }
+    if (fields.length === 3) {
+      return celSelectPath3(base, fields[0] as string, fields[1] as string, fields[2] as string);
+    }
+    if (fields.length === 4) {
+      return celSelectPath4(
+        base,
+        fields[0] as string,
+        fields[1] as string,
+        fields[2] as string,
+        fields[3] as string,
+      );
+    }
+
+    let result = base;
+    for (const field of fields) {
+      result = celSelect(result, field);
+      if (result === undefined) return undefined;
+    }
+    return result;
+  };
+
+  /** Prebuild a resolver for a qualified path so cache population avoids repeated string slicing. */
+  const makeQualifiedResolver = (segments: readonly string[]) => {
+    const root = segments[0] as string;
+    const fallbackFields = segments.slice(1);
+    const prefixes: { key: string; remaining: readonly string[] }[] = [];
+
+    for (let i = segments.length - 1; i >= 1; i--) {
+      prefixes.push({
+        key: segments.slice(0, i + 1).join("."),
+        remaining: segments.slice(i + 1),
+      });
+    }
+
+    return (
+      bindings: Record<string, unknown> | undefined,
+      qb: Record<string, unknown>,
+    ): unknown => {
+      for (const prefix of prefixes) {
+        if (prefix.key in qb) {
+          if (prefix.remaining.length === 0) return qb[prefix.key];
+          return applySelectFields(qb[prefix.key], prefix.remaining);
+        }
+      }
+      return applySelectFields(resolveBinding(root, bindings, qb), fallbackFields);
+    };
+  };
+
+  const qualifiedBindingResolvers = qualifiedBindingSpecs.map((binding) => ({
+    key: binding.segments.join("."),
+    resolve: makeQualifiedResolver(binding.segments),
+  }));
+
+  /** Populate exact qualified-path hits into qb once per bindings object. */
+  const populateQualifiedBindings = (
+    qb: Record<string, unknown>,
+    bindings: Record<string, unknown> | undefined,
+  ): void => {
+    for (const resolver of qualifiedBindingResolvers) {
+      if (resolver.key in qb) continue;
+      const value = resolver.resolve(bindings, qb);
+      if (value !== undefined) {
+        qb[resolver.key] = value;
+      }
+    }
   };
 
   /** Check result and throw on error sentinel. */

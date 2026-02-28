@@ -59,6 +59,29 @@ class TempAllocator {
   }
 }
 
+export interface QualifiedBinding {
+  /** Qualified path segments resolved once in evaluate() */
+  segments: readonly string[];
+}
+
+class QualifiedBindingAllocator {
+  private readonly byPath = new Map<string, QualifiedBinding>();
+
+  registerValue(segments: readonly string[]): void {
+    const key = segments.join(".");
+    if (!this.byPath.has(key)) {
+      this.byPath.set(key, { segments: [...segments] });
+    }
+  }
+
+  getUsed(): readonly QualifiedBinding[] {
+    return [...this.byPath.values()];
+  }
+}
+
+let activeQualifiedBindings: QualifiedBindingAllocator | undefined;
+let activeLocalBindings = new Set<string>();
+
 // ---------------------------------------------------------------------------
 // Transformer
 // ---------------------------------------------------------------------------
@@ -70,6 +93,8 @@ export interface TransformResult {
   temps: readonly string[];
   /** Binding variable names discovered during transformation */
   bindings: readonly string[];
+  /** Qualified value paths surfaced to evaluate() for qb cache prepopulation */
+  qualifiedBindings: readonly QualifiedBinding[];
 }
 
 /**
@@ -86,8 +111,17 @@ export interface TransformResult {
 export function transform(celAst: CelExpr): TransformResult {
   const temps = new TempAllocator();
   const bindingSet = new Set<string>();
-
-  const expr = transformExpr(celAst, temps, bindingSet);
+  const qualifiedBindingSet = new QualifiedBindingAllocator();
+  let expr!: Expression;
+  const previousLocalBindings = activeLocalBindings;
+  activeQualifiedBindings = qualifiedBindingSet;
+  activeLocalBindings = new Set();
+  try {
+    expr = transformExpr(celAst, temps, bindingSet);
+  } finally {
+    activeQualifiedBindings = undefined;
+    activeLocalBindings = previousLocalBindings;
+  }
 
   const usedTemps = temps.getUsed();
   const body: Statement[] = [];
@@ -100,6 +134,7 @@ export function transform(celAst: CelExpr): TransformResult {
   body.push(returnStatement(expr));
 
   const bindings = [...bindingSet];
+  const qualifiedBindings = qualifiedBindingSet.getUsed();
 
   const prog = program([
     exprStatement(
@@ -111,7 +146,7 @@ export function transform(celAst: CelExpr): TransformResult {
     ),
   ]);
 
-  return { program: prog, temps: usedTemps, bindings };
+  return { program: prog, temps: usedTemps, bindings, qualifiedBindings };
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +186,19 @@ function at<T>(arr: readonly T[], i: number): T {
   return v;
 }
 
+function withLocalBindings<T>(names: readonly string[], fn: () => T): T {
+  const previous = activeLocalBindings;
+  activeLocalBindings = new Set(previous);
+  for (const name of names) {
+    activeLocalBindings.add(name);
+  }
+  try {
+    return fn();
+  } finally {
+    activeLocalBindings = previous;
+  }
+}
+
 /**
  * Collect a chain of Select nodes from an Ident root.
  * For `Select(Select(Ident("a"), "b"), "c")` returns `["a", "b", "c"]`.
@@ -165,56 +213,31 @@ function collectSelectChain(node: CelExpr): string[] | undefined {
   return undefined;
 }
 
-/**
- * Build an ESTree expression for qualified identifier resolution.
- * Tries longest prefix first from the `_b` (bindings) parameter.
- *
- * For segments ["a", "b", "c"], generates:
- *   "a.b.c" in _b ? _b["a.b.c"] :
- *   "a.b" in _b ? _rt.select(_b["a.b"], "c") :
- *   _rt.select(_rt.select(a, "b"), "c")
- *
- * The final fallback uses the simple binding parameter `a` (looked up normally).
- */
+/** Build an ESTree expression for qualified value lookup and register its full path. */
 function buildQualifiedResolution(
   segments: string[],
   _temps: TempAllocator,
   bindings: Set<string>,
 ): Expression {
-  const _b = identifier("_qb");
-
   const rootName = segments[0] as string;
-  // Synthetic names (block index, iter var) are local, not external bindings.
-  if (!isSyntheticName(rootName)) {
-    bindings.add(rootName);
+  if (activeLocalBindings.has(rootName)) {
+    return applySelectChain(identifier(rootName), segments.slice(1));
   }
-
-  // Build the fallback: root as simple binding parameter, rest as selects.
-  // The root binding parameter always has the same value as _qb[rootName]
-  // (both populated from the same source in evaluate()), so we skip the
-  // root-level _qb check entirely — the fallback handles it.
-  let fallback: Expression = applySelectChain(identifier(rootName), segments.slice(1));
-
-  // For single-segment references, check _qb then fallback
-  if (segments.length === 1) {
-    return conditional(
-      binaryExpr("in", literal(rootName), _b),
-      memberExpr(_b, literal(rootName), true),
-      fallback,
-    );
+  if (activeQualifiedBindings === undefined) {
+    throw new Error("Qualified binding allocator is not initialized");
   }
+  activeQualifiedBindings.registerValue(segments);
 
-  // For multi-segment chains, check intermediate prefixes from longest to
-  // shortest (CEL longest-prefix-wins semantics), but skip the root-level
-  // check since it's redundant with the direct-access fallback.
+  const _b = identifier("_qb");
+  bindings.add(rootName);
+
+  const fallback: Expression = applySelectChain(identifier(rootName), segments.slice(1));
   let result: Expression = fallback;
+
   for (let i = 1; i < segments.length; i++) {
     const key = segments.slice(0, i + 1).join(".");
     const lookupExpr: Expression = memberExpr(_b, literal(key), true);
-
-    // Apply remaining selects after the matched prefix
     const selected = applySelectChain(lookupExpr, segments.slice(i + 1));
-
     result = conditional(binaryExpr("in", literal(key), _b), selected, result);
   }
 
@@ -773,7 +796,9 @@ function transformCall(
     // Body uses a local scope: the bound variable should NOT leak to outer bindings
     const innerBindings = new Set(bindings);
     innerBindings.add(varName);
-    const bodyExpr = transformExpr(at(args, 2), temps, innerBindings);
+    const bodyExpr = withLocalBindings([varName], () =>
+      transformExpr(at(args, 2), temps, innerBindings),
+    );
 
     // Generate: ((varName) => bodyExpr)(initExpr)
     return callExpr(arrowFn([identifier(varName)], bodyExpr, true), [initExpr]);
@@ -859,7 +884,9 @@ function transformCall(
       const varName = varNode.name;
       const innerBindings = new Set(bindings);
       innerBindings.add(varName);
-      const bodyExpr = transformExpr(at(args, 1), temps, innerBindings);
+      const bodyExpr = withLocalBindings([varName], () =>
+        transformExpr(at(args, 1), temps, innerBindings),
+      );
       const rtName = fn === "optMap" ? "optionalOptMap" : "optionalOptFlatMap";
       return rtCall(rtName, [receiver, arrowFn([identifier(varName)], bodyExpr, true)]);
     }
@@ -1069,7 +1096,9 @@ function transformComprehension(
     const iterRange = transformExpr(node.iterRange, temps, bindings);
     const innerBindings = new Set(bindings);
     innerBindings.add(node.iterVar);
-    const predBody = transformExpr(filterPredicate, temps, innerBindings);
+    const predBody = withLocalBindings([node.iterVar], () =>
+      transformExpr(filterPredicate, temps, innerBindings),
+    );
     return rtCall("filterList", [iterRange, arrowFn([identifier(node.iterVar)], predBody, true)]);
   }
 
@@ -1085,9 +1114,19 @@ function transformComprehension(
     innerBindings.add(node.iterVar2);
   }
 
-  const loopCondition = transformExpr(node.loopCondition, temps, innerBindings);
-  const loopStep = transformExpr(node.loopStep, temps, innerBindings);
-  const result = transformExpr(node.result, temps, innerBindings);
+  const localNames =
+    node.iterVar2 !== undefined
+      ? [node.iterVar, node.accuVar, node.iterVar2]
+      : [node.iterVar, node.accuVar];
+  const loopCondition = withLocalBindings(localNames, () =>
+    transformExpr(node.loopCondition, temps, innerBindings),
+  );
+  const loopStep = withLocalBindings(localNames, () =>
+    transformExpr(node.loopStep, temps, innerBindings),
+  );
+  const result = withLocalBindings([node.accuVar], () =>
+    transformExpr(node.result, temps, innerBindings),
+  );
 
   // Build lambda parameters: (iterVar [, iterVar2], accuVar)
   const condParams =
