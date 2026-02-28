@@ -512,6 +512,16 @@ function mapHas(m: Map<CelValue, CelValue>, key: CelValue): boolean {
   return false;
 }
 
+/** Return a plain object record fast-path target, or undefined for non-plain objects. */
+function asPlainRecord(v: unknown): Record<string, CelValue> | undefined {
+  if (v === null || v === undefined || typeof v !== "object") return undefined;
+  const proto = Object.getPrototypeOf(v);
+  if (proto === Object.prototype || proto === null) {
+    return v as Record<string, CelValue>;
+  }
+  return undefined;
+}
+
 // ── Collection Helpers ─────────────────────────────────────────────────────
 
 export function celIn(elem: unknown, collection: unknown): boolean | undefined {
@@ -651,6 +661,89 @@ export function celSelect(obj: unknown, field: string): CelValue | undefined {
     return (obj as Record<string, CelValue>)[field];
   }
   return undefined;
+}
+
+/** Fused select chain for the common plain-object path, with full fallback semantics. */
+export function celSelectPath2(obj: unknown, field1: string, field2: string): CelValue | undefined {
+  const record0 = asPlainRecord(obj);
+  if (record0 !== undefined) {
+    const value1 = record0[field1];
+    if (value1 === null || value1 === undefined || typeof value1 !== "object") return undefined;
+    const record1 = asPlainRecord(value1);
+    if (record1 !== undefined) return record1[field2];
+  } else if (obj === null || obj === undefined || typeof obj !== "object") {
+    return undefined;
+  }
+
+  const selected1 = celSelect(obj, field1);
+  if (selected1 === undefined) return undefined;
+  return celSelect(selected1, field2);
+}
+
+/** Fused 3-hop select chain for plain-object access. */
+export function celSelectPath3(
+  obj: unknown,
+  field1: string,
+  field2: string,
+  field3: string,
+): CelValue | undefined {
+  const record0 = asPlainRecord(obj);
+  if (record0 !== undefined) {
+    const value1 = record0[field1];
+    if (value1 === null || value1 === undefined || typeof value1 !== "object") return undefined;
+    const record1 = asPlainRecord(value1);
+    if (record1 !== undefined) {
+      const value2 = record1[field2];
+      if (value2 === null || value2 === undefined || typeof value2 !== "object") return undefined;
+      const record2 = asPlainRecord(value2);
+      if (record2 !== undefined) return record2[field3];
+    }
+  } else if (obj === null || obj === undefined || typeof obj !== "object") {
+    return undefined;
+  }
+
+  const selected1 = celSelect(obj, field1);
+  if (selected1 === undefined) return undefined;
+  const selected2 = celSelect(selected1, field2);
+  if (selected2 === undefined) return undefined;
+  return celSelect(selected2, field3);
+}
+
+/** Fused 4-hop select chain for plain-object access. */
+export function celSelectPath4(
+  obj: unknown,
+  field1: string,
+  field2: string,
+  field3: string,
+  field4: string,
+): CelValue | undefined {
+  const record0 = asPlainRecord(obj);
+  if (record0 !== undefined) {
+    const value1 = record0[field1];
+    if (value1 === null || value1 === undefined || typeof value1 !== "object") return undefined;
+    const record1 = asPlainRecord(value1);
+    if (record1 !== undefined) {
+      const value2 = record1[field2];
+      if (value2 === null || value2 === undefined || typeof value2 !== "object") return undefined;
+      const record2 = asPlainRecord(value2);
+      if (record2 !== undefined) {
+        const value3 = record2[field3];
+        if (value3 === null || value3 === undefined || typeof value3 !== "object") return undefined;
+        const record3 = asPlainRecord(value3);
+        if (record3 !== undefined) return record3[field4];
+      }
+    }
+  } else if (obj === null || obj === undefined || typeof obj !== "object") {
+    return undefined;
+  }
+
+  const selected1 = celSelect(obj, field1);
+  if (selected1 === undefined) return undefined;
+  const selected2 = celSelect(selected1, field2);
+  if (selected2 === undefined) return undefined;
+  const selected3 = celSelect(selected2, field3);
+  if (selected3 === undefined) return undefined;
+  return celSelect(selected3, field4);
 }
 
 // ── String Helpers ─────────────────────────────────────────────────────────
@@ -3542,6 +3635,9 @@ export function createRuntime(options?: RuntimeOptions) {
     size: celSize,
     index: celIndex,
     select: celSelect,
+    selectPath2: celSelectPath2,
+    selectPath3: celSelectPath3,
+    selectPath4: celSelectPath4,
     // Strings
     contains: celContains,
     startsWith: celStartsWith,

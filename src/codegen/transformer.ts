@@ -12,6 +12,7 @@ import {
   blockStatement,
   callExpr,
   conditional,
+  dot,
   exprStatement,
   identifier,
   literal,
@@ -22,6 +23,7 @@ import {
   returnStatement,
   rtCall,
   sequenceExpr,
+  unaryExpr,
   varDecl,
 } from "./estree-builders.js";
 
@@ -191,10 +193,7 @@ function buildQualifiedResolution(
   // The root binding parameter always has the same value as _qb[rootName]
   // (both populated from the same source in evaluate()), so we skip the
   // root-level _qb check entirely — the fallback handles it.
-  let fallback: Expression = identifier(rootName);
-  for (let i = 1; i < segments.length; i++) {
-    fallback = rtCall("select", [fallback, literal(segments[i] as string)]);
-  }
+  let fallback: Expression = applySelectChain(identifier(rootName), segments.slice(1));
 
   // For single-segment references, check _qb then fallback
   if (segments.length === 1) {
@@ -214,10 +213,7 @@ function buildQualifiedResolution(
     const lookupExpr: Expression = memberExpr(_b, literal(key), true);
 
     // Apply remaining selects after the matched prefix
-    let selected: Expression = lookupExpr;
-    for (let j = i + 1; j < segments.length; j++) {
-      selected = rtCall("select", [selected, literal(segments[j] as string)]);
-    }
+    const selected = applySelectChain(lookupExpr, segments.slice(i + 1));
 
     result = conditional(binaryExpr("in", literal(key), _b), selected, result);
   }
@@ -558,6 +554,117 @@ function flattenQualifiedName(node: CelExpr): string | undefined {
   return undefined;
 }
 
+/** Emit a select chain, using fused helpers for 2-4 hop paths. */
+function applySelectChain(base: Expression, fields: readonly string[]): Expression {
+  if (fields.length === 0) return base;
+  if (fields.length === 1) {
+    return rtCall("select", [base, literal(fields[0] as string)]);
+  }
+  if (fields.length <= 4) {
+    return rtCall(`selectPath${fields.length}`, [base, ...fields.map((f) => literal(f))]);
+  }
+
+  let result = base;
+  for (const field of fields) {
+    result = rtCall("select", [result, literal(field)]);
+  }
+  return result;
+}
+
+function typeIs(expr: Expression, typeName: string): Expression {
+  return binaryExpr("===", unaryExpr("typeof", expr), literal(typeName));
+}
+
+function bothType(left: Expression, right: Expression, typeName: string): Expression {
+  return logicalExpr("&&", typeIs(left, typeName), typeIs(right, typeName));
+}
+
+function buildPrimitiveBinaryFastPath(
+  fn: string,
+  args: readonly CelExpr[],
+  temps: TempAllocator,
+  bindings: Set<string>,
+): Expression | undefined {
+  if (args.length !== 2) return undefined;
+
+  let fallbackMethod: string | undefined;
+
+  if (fn === "_>_") {
+    fallbackMethod = "gt";
+  } else if (fn === "_>=_") {
+    fallbackMethod = "ge";
+  } else if (fn === "_<_") {
+    fallbackMethod = "lt";
+  } else if (fn === "_<=_") {
+    fallbackMethod = "le";
+  } else if (fn === "_==_" || fn === "_!=_") {
+    fallbackMethod = fn === "_==_" ? "eq" : "ne";
+  }
+
+  if (fallbackMethod === undefined) {
+    return undefined;
+  }
+
+  const left = transformExpr(at(args, 0), temps, bindings);
+  const right = transformExpr(at(args, 1), temps, bindings);
+  const tmpA = temps.next();
+  const tmpB = temps.next();
+  const idA = identifier(tmpA);
+  const idB = identifier(tmpB);
+
+  let fastExpr: Expression;
+  let testExpr: Expression;
+
+  if (fn === "_>_") {
+    testExpr = bothType(idA, idB, "bigint");
+    fastExpr = binaryExpr(">", idA, idB);
+  } else if (fn === "_>=_") {
+    testExpr = bothType(idA, idB, "bigint");
+    fastExpr = binaryExpr(">=", idA, idB);
+  } else if (fn === "_<_") {
+    testExpr = bothType(idA, idB, "bigint");
+    fastExpr = binaryExpr("<", idA, idB);
+  } else if (fn === "_<=_") {
+    testExpr = bothType(idA, idB, "bigint");
+    fastExpr = binaryExpr("<=", idA, idB);
+  } else {
+    const stringGuard = bothType(idA, idB, "string");
+    const boolGuard = bothType(idA, idB, "boolean");
+    const bigintGuard = bothType(idA, idB, "bigint");
+    testExpr = logicalExpr("||", stringGuard, logicalExpr("||", boolGuard, bigintGuard));
+    fastExpr = binaryExpr(fn === "_==_" ? "===" : "!==", idA, idB);
+  }
+
+  return sequenceExpr([
+    assignExpr(idA, left),
+    assignExpr(idB, right),
+    conditional(testExpr, fastExpr, rtCall(fallbackMethod, [idA, idB])),
+  ]);
+}
+
+function buildStringMethodFastPath(
+  rtMethod: "contains" | "startsWith" | "endsWith",
+  receiver: Expression,
+  arg: Expression,
+  temps: TempAllocator,
+): Expression {
+  const tmpA = temps.next();
+  const tmpB = temps.next();
+  const idA = identifier(tmpA);
+  const idB = identifier(tmpB);
+  const jsMethod = rtMethod === "contains" ? "includes" : rtMethod;
+
+  return sequenceExpr([
+    assignExpr(idA, receiver),
+    assignExpr(idB, arg),
+    conditional(
+      bothType(idA, idB, "string"),
+      callExpr(dot(idA, jsMethod), [idB]),
+      rtCall(rtMethod, [idA, idB]),
+    ),
+  ]);
+}
+
 // ---------------------------------------------------------------------------
 // Call transformations
 // ---------------------------------------------------------------------------
@@ -623,11 +730,29 @@ function transformCall(
     ]);
   }
 
+  const primitiveFastPath = buildPrimitiveBinaryFastPath(fn, args, temps, bindings);
+  if (primitiveFastPath !== undefined) {
+    return primitiveFastPath;
+  }
+
   // -- Operator functions (arithmetic, comparison, index, in) -----------
   const rtMethod = OPERATOR_TO_RT[fn];
   if (rtMethod !== undefined) {
     const transformedArgs = args.map((a) => transformExpr(a, temps, bindings));
     return rtCall(rtMethod, transformedArgs);
+  }
+
+  if (
+    target === undefined &&
+    args.length === 2 &&
+    (fn === "contains" || fn === "startsWith" || fn === "endsWith")
+  ) {
+    return buildStringMethodFastPath(
+      fn,
+      transformExpr(at(args, 0), temps, bindings),
+      transformExpr(at(args, 1), temps, bindings),
+      temps,
+    );
   }
 
   // -- cel.bind(varName, initExpr, bodyExpr) -> IIFE binding -----------
@@ -747,6 +872,14 @@ function transformCall(
 
   // -- Member method call: obj.method(args) -> _rt.method(obj, ...args) -
   if (target !== undefined) {
+    if (args.length === 1 && (fn === "contains" || fn === "startsWith" || fn === "endsWith")) {
+      return buildStringMethodFastPath(
+        fn,
+        transformExpr(target, temps, bindings),
+        transformExpr(at(args, 0), temps, bindings),
+        temps,
+      );
+    }
     const receiver = transformExpr(target, temps, bindings);
     const transformedArgs = args.map((a) => transformExpr(a, temps, bindings));
     const memberMethod = MEMBER_FUNC_TO_RT[fn];
