@@ -13,23 +13,17 @@ import type {
   Expression,
   ExpressionStatement,
   Identifier,
-  IfStatement,
   LogicalExpression,
   LogicalOperator,
   MemberExpression,
   NewExpression,
-  ObjectExpression,
   Program,
-  Property,
-  RegExpLiteral,
   ReturnStatement,
   SequenceExpression,
   SimpleCallExpression,
   SimpleLiteral,
   SpreadElement,
   Statement,
-  TemplateElement,
-  TemplateLiteral,
   UnaryExpression,
   UnaryOperator,
   VariableDeclaration,
@@ -54,26 +48,6 @@ export function bigintLiteral(value: bigint): BigIntLiteral {
     bigint: value.toString(),
     raw: `${value}n`,
   };
-}
-
-export function regexpLiteral(pattern: string, flags: string): RegExpLiteral {
-  return {
-    type: "Literal",
-    value: new RegExp(pattern, flags),
-    raw: `/${pattern}/${flags}`,
-    regex: { pattern, flags },
-  };
-}
-
-export function templateLiteral(
-  quasis: TemplateElement[],
-  expressions: Expression[],
-): TemplateLiteral {
-  return { type: "TemplateLiteral", quasis, expressions };
-}
-
-export function templateElement(raw: string, cooked: string, tail: boolean): TemplateElement {
-  return { type: "TemplateElement", value: { raw, cooked }, tail };
 }
 
 export function unaryExpr(operator: UnaryOperator, argument: Expression): UnaryExpression {
@@ -125,22 +99,6 @@ export function arrayExpr(elements: (Expression | SpreadElement)[]): ArrayExpres
   return { type: "ArrayExpression", elements };
 }
 
-export function objectExpr(properties: Property[]): ObjectExpression {
-  return { type: "ObjectExpression", properties };
-}
-
-export function property(key: Expression, value: Expression, computed = false): Property {
-  return {
-    type: "Property",
-    key,
-    value,
-    kind: "init",
-    method: false,
-    shorthand: false,
-    computed,
-  };
-}
-
 export function arrowFn(
   params: Identifier[],
   body: Expression | BlockStatement,
@@ -158,10 +116,6 @@ export function assignExpr(
 
 export function sequenceExpr(expressions: Expression[]): SequenceExpression {
   return { type: "SequenceExpression", expressions };
-}
-
-export function spreadElement(argument: Expression): SpreadElement {
-  return { type: "SpreadElement", argument };
 }
 
 export function newExpr(callee: Expression, args: (Expression | SpreadElement)[]): NewExpression {
@@ -196,14 +150,6 @@ export function blockStatement(body: Statement[]): BlockStatement {
   return { type: "BlockStatement", body };
 }
 
-export function ifStatement(
-  test: Expression,
-  consequent: Statement,
-  alternate: Statement | null = null,
-): IfStatement {
-  return { type: "IfStatement", test, consequent, alternate };
-}
-
 // ---------------------------------------------------------------------------
 // Top-level
 // ---------------------------------------------------------------------------
@@ -228,22 +174,4 @@ export function rtCall(method: string, args: (Expression | SpreadElement)[]): Si
 /** Shorthand for `object.property` (non-computed, non-optional). */
 export function dot(object: Expression, prop: string): MemberExpression {
   return memberExpr(object, identifier(prop));
-}
-
-/** Shorthand for `object[key]` (computed access). */
-export function index(object: Expression, key: Expression): MemberExpression {
-  return memberExpr(object, key, true);
-}
-
-/** Shorthand for `object?.property` (optional chaining). */
-export function optionalDot(object: Expression, prop: string): MemberExpression {
-  return memberExpr(object, identifier(prop), false, true);
-}
-
-/** Shorthand for `callee?.(...args)` (optional call). */
-export function optionalCall(
-  callee: Expression,
-  args: (Expression | SpreadElement)[],
-): SimpleCallExpression {
-  return callExpr(callee, args, true);
 }
