@@ -2294,8 +2294,16 @@ export function celFilterList(range: unknown, predicate: (elem: unknown) => unkn
  * or resolve an IANA timezone name. Returns Date adjusted to that timezone.
  */
 function getDateInTimezone(d: Date, tz: string): Date | undefined {
+  // Numeric offset: apply arithmetic directly (no Intl dependency)
+  const offsetMatch = /^([+-]?)(\d{1,2}):(\d{2})$/.exec(tz);
+  if (offsetMatch) {
+    const sign = offsetMatch[1] === "-" ? -1 : 1;
+    const h = Number.parseInt(offsetMatch[2] ?? "0", 10);
+    const m = Number.parseInt(offsetMatch[3] ?? "0", 10);
+    return new Date(d.getTime() + sign * (h * 60 + m) * 60000);
+  }
+  // IANA timezone name: use Intl.DateTimeFormat
   try {
-    // Use Intl.DateTimeFormat to get the local time parts in the target timezone
     const formatter = new Intl.DateTimeFormat("en-US", {
       timeZone: tz,
       year: "numeric",
@@ -2319,33 +2327,10 @@ function getDateInTimezone(d: Date, tz: string): Date | undefined {
     if (hour === 24) hour = 0;
     const minute = get("minute");
     const second = get("second");
-    // Create a date representing this local time (in UTC coordinates for extraction)
     return new Date(Date.UTC(year, month - 1, day, hour, minute, second));
   } catch {
     return undefined;
   }
-}
-
-/**
- * Parse timezone string: either IANA name or offset like "+05:30", "-02:00", "02:00"
- * Returns the timezone string suitable for Intl.DateTimeFormat.
- */
-function normalizeTimezone(tz: string): string {
-  // Check for offset format: optional sign, digits, colon, digits
-  const offsetMatch = /^([+-]?)(\d{1,2}):(\d{2})$/.exec(tz);
-  if (offsetMatch) {
-    const sign = offsetMatch[1] ?? "";
-    const hours = offsetMatch[2] ?? "0";
-    const minutes = offsetMatch[3] ?? "00";
-    const h = Number.parseInt(hours, 10);
-    const m = Number.parseInt(minutes, 10);
-    if (h === 0 && m === 0) return "UTC";
-    // Build a proper offset string for Intl: needs explicit sign
-    const signStr = sign === "-" ? "-" : "+";
-    return `${signStr}${hours.padStart(2, "0")}:${minutes}`;
-  }
-  // Otherwise, assume IANA timezone name
-  return tz;
 }
 
 /** Get day of year (0-based) for a date */
@@ -2462,7 +2447,7 @@ function celGetMilliseconds(v: unknown, _tz?: unknown): bigint | undefined {
 /** Helper: get CelTimestamp in a timezone, returning a Date for component extraction */
 function tsInTz(v: CelTimestamp, tz: unknown): Date | undefined {
   if (!isStr(tz)) return undefined;
-  return getDateInTimezone(v.toDate(), normalizeTimezone(tz));
+  return getDateInTimezone(v.toDate(), tz);
 }
 
 // ── Math Extension Functions ───────────────────────────────────────────────
