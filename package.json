@@ -1,6 +1,6 @@
 {
   "name": "cel2js",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "CEL (Common Expression Language) to JavaScript transpiler",
   "type": "module",
   "engines": {
@@ -8,6 +8,34 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ctoth/cel2js.git"
+  },
+  "homepage": "https://github.com/ctoth/cel2js#readme",
+  "bugs": {
+    "url": "https://github.com/ctoth/cel2js/issues"
+  },
+  "author": "Christopher Toth",
+  "keywords": [
+    "cel",
+    "common-expression-language",
+    "transpiler",
+    "expression",
+    "compiler",
+    "google-cel"
+  ],
   "scripts": {
     "build:parser": "peggy --format es -o src/parser/parser.js src/parser/cel.peggy",
     "build": "tsc",
@@ -15,7 +43,7 @@
     "test:watch": "vitest",
     "bench": "vitest bench",
     "bench:run": "vitest bench --run",
-    "bench:gate": "tsx bench/gate.ts",
+    "bench:gate": "npx tsx bench/gate.ts",
     "precommit": "tsc --noEmit && biome check .",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
@@ -34,6 +62,7 @@
     "cel-js": "^0.8.2",
     "lefthook": "^2.1.1",
     "peggy": "^5.0.6",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },

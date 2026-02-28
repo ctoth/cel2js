@@ -3,3 +3,11 @@ dist/
 coverage/
 *.tsbuildinfo
 test-results.log
+
+# Working files
+notes-*.md
+reports/
+prompts/
+*.log
+!package-lock.json
+CLAUDE.md
