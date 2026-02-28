@@ -37,16 +37,16 @@ class TempAllocator {
 
   next(): string {
     const n = this.counter;
-    // _a.._z, then _aa, _ab, ... for overflow
+    // _$a.._$z, then _$aa, _$ab, ... for overflow
     let name: string;
     if (n < 26) {
-      name = `_${String.fromCharCode(97 + n)}`;
+      name = `_$${String.fromCharCode(97 + n)}`;
     } else {
-      // Multi-char: _aa, _ab, ..., _az, _ba, ...
+      // Multi-char: _$aa, _$ab, ..., _$az, _$ba, ...
       const hi = Math.floor(n / 26) - 1;
       const lo = n % 26;
       name =
-        (hi < 26 ? `_${String.fromCharCode(97 + hi)}` : `_${hi.toString(36)}`) +
+        (hi < 26 ? `_$${String.fromCharCode(97 + hi)}` : `_$${hi.toString(36)}`) +
         String.fromCharCode(97 + lo);
     }
     this.counter++;
